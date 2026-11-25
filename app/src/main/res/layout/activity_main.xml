@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F0F14"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:id="@+id/container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:id="@+id/tabbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#14141A"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp">
+
+        <!-- 后台（最左，动作按钮） -->
+        <LinearLayout
+            android:id="@+id/tabBack"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <ImageView
+                android:id="@+id/tabBackIcon"
+                android:layout_width="21.7dp"
+                android:layout_height="21.7dp"
+                android:contentDescription="后台"
+                android:src="@drawable/ic_background" />
+
+            <TextView
+                android:id="@+id/tabBackLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:visibility="gone"
+                android:text="网页后台"
+                android:textColor="#8A8798"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 烧录 -->
+        <LinearLayout
+            android:id="@+id/tabFlash"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/tabFlashPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tab_selected"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingStart="21dp"
+                android:paddingTop="5dp"
+                android:paddingEnd="21dp"
+                android:paddingBottom="5dp">
+
+                <ImageView
+                    android:id="@+id/tabFlashIcon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:contentDescription="烧录"
+                    android:src="@drawable/ic_flash" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tabFlashLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="固件烧录"
+                android:textColor="#E9E6F4"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- 日志 -->
+        <LinearLayout
+            android:id="@+id/tabLog"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/tabLogPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_tab_normal"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingStart="21dp"
+                android:paddingTop="5dp"
+                android:paddingEnd="21dp"
+                android:paddingBottom="5dp">
+
+                <ImageView
+                    android:id="@+id/tabLogIcon"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:contentDescription="日志"
+                    android:src="@drawable/ic_terminal" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tabLogLabel"
+                android:visibility="gone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:text="串口日志"
+                android:textColor="#8A8798"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

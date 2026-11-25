@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="64dp"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/bg_lib_row"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="10dp"
+    android:paddingEnd="6dp">
+
+    <CheckBox
+        android:id="@+id/fwRadio"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:buttonTint="#AFC3F7"
+        android:clickable="false"
+        android:focusable="false" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="4dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/fwName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:text="firmware.bin"
+            android:textColor="#E9E6F4"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/fwSub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:text="BIN x1 · 0x10000 · 3.5 MB"
+            android:textColor="#8E8E9A"
+            android:textSize="11.5sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:layout_marginStart="6dp">
+
+        <TextView
+            android:id="@+id/fwOffsetPrefix"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:layout_marginEnd="3dp"
+            android:gravity="center_vertical"
+            android:text="0x"
+            android:textColor="#8E8E9A"
+            android:textSize="11.5sp" />
+
+        <TextView
+            android:id="@+id/fwOffset"
+            android:layout_width="64dp"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:background="@drawable/bg_underline"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:paddingBottom="3dp"
+            android:gravity="center"
+            android:text="10000"
+            android:textColor="#F4756B"
+            android:textSize="11.5sp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/fwDel"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:layout_marginStart="4dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="删除"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_trash_small"
+        android:tint="#F4756B" />
+</LinearLayout>

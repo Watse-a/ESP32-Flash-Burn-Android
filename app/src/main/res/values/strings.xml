@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">ESP-FlashBurn</string>
+    <string name="tab_flash">固件烧录</string>
+    <string name="tab_serial">串口助手</string>
+</resources>

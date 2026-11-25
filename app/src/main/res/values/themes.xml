@@ -1,0 +1,18 @@
+<resources>
+    <style name="Theme.EspFlasher" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">#2563EB</item>
+        <item name="colorPrimaryVariant">#1D4ED8</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#AECBFA</item>
+        <item name="colorOnSecondary">#0B0C0E</item>
+        <item name="colorSurface">#16181B</item>
+        <item name="colorOnSurface">#EDEDEE</item>
+        <item name="android:colorBackground">#0B0C0E</item>
+        <item name="android:windowBackground">#0B0C0E</item>
+        <item name="android:statusBarColor">#0B0C0E</item>
+        <item name="android:navigationBarColor">#0B0C0E</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">#EDEDEE</item>
+        <item name="android:textColorSecondary">#9AA0A6</item>
+    </style>
+</resources>

@@ -131,10 +131,9 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         progressIndet = v.findViewById(R.id.progressIndet)
         fileSummary = v.findViewById(R.id.fileSummary)
         infoPanel = v.findViewById<LinearLayout>(R.id.infoPanel).apply { visibility = android.view.View.GONE }
-        // 烧录时收起的是日志区顶部那块「文件名 + 彩色标签」，给日志让位
+        // 烧录时只收起顶部「已选固件 n / m」计数行；文件名 + 彩色标签卡片保留在日志区上方
         compactViews = listOfNotNull(
-            v.findViewById<android.view.View>(R.id.fileSummary),
-            v.findViewById<android.view.View>(R.id.fileList)
+            v.findViewById<android.view.View>(R.id.fileSummary)
         )
         logText = v.findViewById(R.id.logText)
         logLive = v.findViewById(R.id.logLive)
@@ -1587,7 +1586,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         if (::infoPanel.isInitialized) infoPanel.removeAllViews()
     }
 
-    /** 烧录中收起上半部分（设备卡、按钮、开关），把整屏留给日志 */
+    /** 烧录中只隐藏顶部计数行，固件标签卡片保留 */
     private fun setCompact(on: Boolean) {
         compactViews?.forEach { it.visibility = if (on) android.view.View.GONE else android.view.View.VISIBLE }
     }

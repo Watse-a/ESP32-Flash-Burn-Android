@@ -1017,7 +1017,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             err = probe
         } else if (cbAutoReset.isChecked) {
             // UART 桥（CH340 等）插着时芯片一般跑着应用，直接同步只会收到它的串口输出
-            uiLog("UART 串口：先复位进BOOT再同步")
+            uiLog("自动进入 boot 模式（UART 先复位再同步）")
             err = NativeFlasher.TIMEOUT_CODE
         } else {
             err = NativeFlasher.nativeConnect(400, 8, wantStub)

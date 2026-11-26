@@ -1502,9 +1502,23 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                     uiLog("写入完成，耗时 ${ms / 1000.0}s，均速 ${"%.1f".format(kbs)} KB/s")
                 }
                 if (failReason == null) {
+                    // 写完先让芯片自己跳回运行态：DTR/IO0 保持高，只脉冲 RTS/EN。
+                    // 以前这里只打了一句“已复位运行”，实际没发复位，芯片一直停在 stub 里。
                     endingOk = true
+                    val rs = runCatching {
+                        val a = link.setControlLinesIdx(false, true, 0)
+                        Thread.sleep(120)
+                        val b = link.setControlLinesIdx(false, false, 0)
+                        Thread.sleep(200)
+                        a to b
+                    }
+                    if (rs.isSuccess) {
+                        uiLog("已复位重启，芯片开始运行新固件")
+                        L.i("烧录结束：复位脉冲已发出（$rs）")
+                    } else {
+                        uiLog("复位重启失败：${rs.exceptionOrNull()?.message ?: "串口已关闭"}")
+                    }
                     progressWrap.post { showProgress(true, 100, "烧录固件…") }
-                    L.i("烧录结束，芯片已复位运行")
                 }
             } catch (t: Throwable) {
                 failReason = "烧录异常：" + (t.message ?: t.javaClass.simpleName)

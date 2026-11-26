@@ -1368,8 +1368,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         setCompact(true)
         clearInfoRows()
         val devLabel = runCatching { "${device.productName ?: "未知设备"} · " +
-                String.format("%04X:%04X", device.vendorId, device.productId) +
-                " · " + (device.manufacturerName ?: "-") }.getOrDefault("串口设备")
+                String.format("%04X:%04X", device.vendorId, device.productId) }.getOrDefault("串口设备")
         appendLog("========== 开始烧录 ${targets.size} 个文件 ==========")
         appendLog("设备：$devLabel")
         job = lifecycleScope.launch(Dispatchers.Default) {

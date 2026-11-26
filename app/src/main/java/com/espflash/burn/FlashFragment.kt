@@ -850,7 +850,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 .append(" / 模式 ").append(p.getString("pMode", "dio"))
                 .append(" / 大小 ").append(p.getString("pSize", "keep"))
                 .append(" / 块 ").append(p.getString("blockKb", "16k"))
-                .append(" / 自动进下载 ").append(if (p.getBoolean("autoReset", true)) "开" else "关")
+                .append(" / 自动BOOT ").append(if (p.getBoolean("autoReset", true)) "开" else "关")
                 .append(" / 加速 ").append(if (p.getBoolean("highSpeed", true)) "开" else "关")
                 .append('\n')
             append("固件    ：").append(files.size).append(" 个\n")
@@ -1010,7 +1010,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 return NativeFlasher.nativeConnect(400, 6, true)
             }
             if (!cbAutoReset.isChecked) {
-                uiLog("直接同步失败（${NativeFlasher.errorText(probe)}），自动下载模式已关闭")
+                uiLog("直接同步失败（${NativeFlasher.errorText(probe)}），自动BOOT已关闭")
                 return probe
             }
             uiLog("自动进入下载模式")
@@ -1022,7 +1022,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         } else {
             err = NativeFlasher.nativeConnect(400, 8, wantStub)
             if (err == NativeFlasher.OK) return err
-            uiLog("直接同步失败（${NativeFlasher.errorText(err)}），自动下载模式已关闭")
+            uiLog("直接同步失败（${NativeFlasher.errorText(err)}），自动BOOT已关闭")
             return err
         }
 
@@ -1070,7 +1070,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     }
 
     /**
-     * 打开串口 → （可选）自动进下载模式 → 连接芯片。
+     * 打开串口 → （可选）自动BOOT → 连接芯片。
      * 失败返回错误原因，成功回调里已经把 loader 连上。
      */
     private suspend fun <T> withLoader(device: UsbDevice, wantStub: Boolean = false,

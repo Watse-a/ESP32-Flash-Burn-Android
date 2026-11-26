@@ -21,7 +21,7 @@
 
 **烧录页**
 - 自动识别原生 USB（`303A:1001` USB-Serial-JTAG）与 CH340 等 UART 桥，原生 USB 走裸端点直读，不依赖 usb-serial-for-android 的 1 字节读路径。
-- 自动进入下载模式：原生 USB 用 `usb_jtag_bootloader_reset` 的 DTR/RTS 时序，UART 桥用 DTR=IO0 / RTS=EN 复位后在端口中转。
+- 自动BOOT（开关「自动BOOT」）：原生 USB 用 `usb_jtag_bootloader_reset` 的 DTR/RTS 时序，UART 桥用 DTR=IO0 / RTS=EN 复位后在端口中转。
 - 握手带短探测：先 200ms 探测芯片是否已在下载模式，失败再复位重连，正常几十毫秒完成，冷启动约 3 秒。
 - 设备芯片擦除：强制走 stub 整片擦除，擦完回读 `0x0 / 0x8000 / 0x10000 / 末尾扇区` 确认全 `0xFF`；成功/失败各有专用弹窗，可复制完整日志。
 - 写入块自适应：原生 USB 上限 16 KB，被拒或首块超时按 16K → 8K → 4K 降档，成功后后续文件从该档起步。

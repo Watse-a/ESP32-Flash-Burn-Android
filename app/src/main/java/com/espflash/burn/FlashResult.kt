@@ -79,6 +79,39 @@ object FlashResult {
     private fun dp(ctx: Context, v: Int): Int =
         (v * ctx.resources.displayMetrics.density).toInt()
 
+    private fun copyLog(ctx: Context, report: String) {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("espburn erase log", report))
+        Toast.makeText(ctx, "日志已复制", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 擦除成功：独立一套，和烧录成功分开；复制按钮给的是带机型/参数/过程日志的完整报告 */
+    fun showEraseOk(ctx: Context, seconds: Double, info: String, report: String) {
+        val (d, v) = sheet(ctx, R.layout.dialog_erase_ok)
+        v.findViewById<TextView>(R.id.subtitle).text = String.format("耗时 %.1fs", seconds)
+        v.findViewById<TextView>(R.id.eraseInfo).text = info
+        v.findViewById<TextView>(R.id.btnDone).setOnClickListener { d.dismiss() }
+        v.findViewById<TextView>(R.id.btnCopy).setOnClickListener { copyLog(ctx, report) }
+    }
+
+    /** 擦除失败：独立一套，展开可看完整过程日志，复制同样拷完整报告 */
+    fun showEraseFail(ctx: Context, seconds: Double, reason: String, report: String) {
+        val (d, v) = sheet(ctx, R.layout.dialog_erase_error)
+        v.findViewById<TextView>(R.id.subtitle).text = String.format("耗时 %.1fs", seconds)
+        v.findViewById<TextView>(R.id.reason).text = reason
+        val detail = v.findViewById<TextView>(R.id.detail)
+        detail.text = report
+        detail.movementMethod = ScrollingMovementMethod()
+        val arrow = v.findViewById<android.widget.ImageView>(R.id.detailArrow)
+        v.findViewById<View>(R.id.detailToggle).setOnClickListener {
+            val show = detail.visibility != View.VISIBLE
+            detail.visibility = if (show) View.VISIBLE else View.GONE
+            arrow.rotation = if (show) 180f else 0f
+        }
+        v.findViewById<TextView>(R.id.btnCopy).setOnClickListener { copyLog(ctx, report) }
+        v.findViewById<TextView>(R.id.btnClose).setOnClickListener { d.dismiss() }
+    }
+
     fun showFail(ctx: Context, seconds: Double, reason: String, raw: String) {
         val (d, v) = sheet(ctx, R.layout.dialog_flash_error)
         v.findViewById<TextView>(R.id.subtitle).text = String.format("耗时 %.1fs", seconds)

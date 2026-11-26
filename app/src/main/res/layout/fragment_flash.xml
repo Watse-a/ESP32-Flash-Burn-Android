@@ -183,78 +183,80 @@
             android:textSize="15sp" />
     </LinearLayout>
 
-    <!-- 选项：三个并排、整组居中 -->
+    <!-- 选项：两块等宽开关，文字在左、开关在右 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:gravity="center_horizontal"
         android:orientation="horizontal">
 
         <LinearLayout
-        android:id="@+id/switchRow"
+            android:id="@+id/switchRow"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="44dp"
             android:layout_weight="1"
-            android:gravity="start|center_vertical"
-            android:orientation="horizontal">
+            android:layout_marginEnd="5dp"
+            android:background="@drawable/bg_switch_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="6dp">
 
-            <CheckBox
-                android:id="@+id/cbAutoReset"
-                android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:buttonTint="#AFC3F7"
-                android:checked="true"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
+                android:layout_weight="1"
                 android:text="自动下载模式"
                 android:textColor="#D8D8E0"
                 android:textSize="13sp" />
+
+            <Switch
+                android:id="@+id/cbAutoReset"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:showText="false"
+                android:switchMinWidth="40dp"
+                android:thumbTint="@color/switch_thumb"
+                android:trackTint="@color/switch_track" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="44dp"
             android:layout_weight="1"
-            android:gravity="center"
-            android:orientation="horizontal">
+            android:layout_marginStart="5dp"
+            android:background="@drawable/bg_switch_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="6dp">
 
-            <CheckBox
-                android:id="@+id/cbHighSpeed"
-                android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:buttonTint="#AFC3F7"
-                android:checked="true"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
+                android:layout_weight="1"
                 android:text="加速模式"
                 android:textColor="#D8D8E0"
                 android:textSize="13sp" />
-        </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="end|center_vertical"
-            android:orientation="horizontal">
-
-            <CheckBox
-                android:id="@+id/cbCompress"
+            <Switch
+                android:id="@+id/cbHighSpeed"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:buttonTint="#AFC3F7"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp"
+                android:checked="true"
                 android:minWidth="0dp"
                 android:minHeight="0dp"
-                android:text="固件压缩"
-                android:textColor="#D8D8E0"
-                android:textSize="13sp" />
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:showText="false"
+                android:switchMinWidth="40dp"
+                android:thumbTint="@color/switch_thumb"
+                android:trackTint="@color/switch_track" />
         </LinearLayout>
     </LinearLayout>
 
@@ -375,10 +377,25 @@
                     android:paddingStart="16dp"
                     android:paddingTop="6dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="16dp"
+                    android:paddingBottom="4dp"
                     android:textColor="#B9B9C4"
                     android:textIsSelectable="true"
                     android:textSize="13sp" />
+
+                <!-- 正在刷新的那一行单独放：进度只重画这一个短 TextView，
+                     不必整块日志 setText 重排，写入时不再一闪一闪 -->
+                <TextView
+                    android:id="@+id/logLive"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="3dp"
+                    android:paddingStart="16dp"
+                    android:paddingTop="0dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="16dp"
+                    android:textColor="#B9B9C4"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

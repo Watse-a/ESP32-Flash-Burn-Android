@@ -47,10 +47,13 @@ static const char *target_chip_name(target_chip_t chip)
 
 #define SHORT_TIMEOUT 100
 #define DEFAULT_TIMEOUT 1000
+/* 压缩写入单包命令的等待上限：一个 16KB 压缩包解压后可能写成百 KB 的 flash，
+ * 芯片侧要解压+编程，1 秒不够会误判超时。这里只放宽 deflate 链路，不动全局默认。 */
+#define DEFLATE_CMD_TIMEOUT 5000
 #define DEFAULT_FLASH_TIMEOUT 3000
 #define LOAD_RAM_TIMEOUT_PER_MB 2000
 #define MD5_TIMEOUT_PER_MB 8000
-#define ERASE_FLASH_TIMEOUT_PER_MB 10000
+#define ERASE_FLASH_TIMEOUT_PER_MB 20000
 
 #define INITIAL_UART_BAUDRATE 115200
 
@@ -656,7 +659,7 @@ esp_loader_error_t esp_loader_flash_deflate_write(esp_loader_t *loader, esp_load
     uint32_t saved_seq = cfg->_state._sequence_number;
     do {
         cfg->_state._sequence_number = saved_seq;
-        loader->_port->ops->start_timer(loader->_port, DEFAULT_TIMEOUT);
+        loader->_port->ops->start_timer(loader->_port, DEFLATE_CMD_TIMEOUT);
         result = loader_flash_deflate_data_cmd(loader, &cfg->_state._sequence_number, payload, size);
         attempt++;
         if (result != ESP_LOADER_SUCCESS && attempt < SERIAL_FLASHER_WRITE_BLOCK_RETRIES) {
@@ -681,7 +684,7 @@ esp_loader_error_t esp_loader_flash_deflate_finish(esp_loader_t *loader, esp_loa
         return ESP_LOADER_SUCCESS;
     }
 
-    loader->_port->ops->start_timer(loader->_port, DEFAULT_TIMEOUT);
+    loader->_port->ops->start_timer(loader->_port, DEFLATE_CMD_TIMEOUT);
     return loader_flash_deflate_end_cmd(loader, true);
 }
 

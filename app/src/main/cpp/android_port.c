@@ -96,7 +96,9 @@ static esp_loader_error_t p_read(esp_loader_port_t *port, uint8_t *data,
      * 上限不能压低：擦除是按 10000ms/MB 给的（16MB 片子上一条擦除命令要几十秒），
      * 卡到 1200ms 就会在擦除还没回包时误判超时。 */
     if (timeout < 20) timeout = 20;
-    if (timeout > 60000) timeout = 60000;
+    /* 擦除 16 MB 时 stub 要几十秒才回包，上一次卡在 60 秒上限就误判超时了，
+       上限放到 190 秒（正好覆盖 16 MB 擦除的 168 秒预算）。 */
+    if (timeout > 190000) timeout = 190000;
     return jb_read(data, size, timeout) == (int)size ? ESP_LOADER_SUCCESS : ESP_LOADER_ERROR_TIMEOUT;
 }
 

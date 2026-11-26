@@ -8,13 +8,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.PopupMenu
 import android.widget.ScrollView
-import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
@@ -31,15 +28,9 @@ import java.util.Locale
 class SerialFragment : Fragment(R.layout.fragment_serial) {
 
     private lateinit var status: TextView
-    private lateinit var baudSpinner: Spinner
     private lateinit var serialLog: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var input: EditText
-    private lateinit var optionsPanel: View
-    private lateinit var modeGroup: android.widget.RadioGroup
-    private lateinit var cbTimestamp: android.widget.CheckBox
-    private lateinit var cbChunkNewline: android.widget.CheckBox
-    private var tuneView: View? = null
     private var usbReceiver: android.content.BroadcastReceiver? = null
     private var pollJob: Job? = null
     private var scanning = false
@@ -47,35 +38,27 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
     private val devices = mutableListOf<UsbDevice>()
     private var link: SerialLink? = null
     private var readerJob: Job? = null
-    private var hexDisplay = false
-    private var showTimestamp = false
-    private var chunkNewline = false
+    private var baudRate = 115200
     private var autoScroll = true
-    private val timeFmt = SimpleDateFormat("mm:ss", Locale.CHINA)
 
     private val bauds = listOf("9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "2000000")
 
-    private fun currentBaud(): Int = bauds.getOrNull(baudSpinner.selectedItemPosition)?.toIntOrNull() ?: 115200
+    private fun currentBaud(): Int = baudRate
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, state: Bundle?): View {
         val v = inflater.inflate(R.layout.fragment_serial, container, false)
         status = v.findViewById(R.id.serialStatus)
-        baudSpinner = v.findViewById(R.id.baudSpinner)
         serialLog = v.findViewById(R.id.serialLog)
         logScroll = v.findViewById(R.id.logScroll)
         input = v.findViewById(R.id.inputText)
-        optionsPanel = v.findViewById(R.id.optionsPanel)
-        modeGroup = v.findViewById(R.id.modeGroup)
-        cbTimestamp = v.findViewById(R.id.cbTimestamp)
-        cbChunkNewline = v.findViewById(R.id.cbChunkNewline)
         return v
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        baudSpinner.adapter = ArrayAdapter(requireContext(), R.layout.spinner_item, bauds)
-        baudSpinner.setSelection(bauds.indexOf("115200"))
+        // 波特率从偏好里恢复，默认 115200
+        baudRate = prefs().getInt("serialBaud", 115200)
 
         // 点设备行：和烧录页一样，弹出设备列表随时切换
         status.setOnClickListener {
@@ -84,51 +67,19 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
         }
 
         view.findViewById<ImageButton>(R.id.clearButton).setOnClickListener { clearScreenAndBuffer() }
-        // 展开期间点设置图标也走「点外部收起」逻辑，这里只负责展开，避免收起后又弹开
-        tuneView = view.findViewById<ImageButton>(R.id.tuneButton)
-        tuneView?.setOnClickListener {
-            optionsPanel.visibility = if (optionsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        }
 
-        modeGroup.setOnCheckedChangeListener { _, checkedId ->
-            hexDisplay = checkedId == R.id.modeHex
-            appendLine(if (hexDisplay) "切换为十六进制显示" else "切换为文本显示")
-        }
-        cbTimestamp.setOnCheckedChangeListener { _, checked ->
-            showTimestamp = checked
-            appendLine(if (checked) "时间戳显示：开" else "时间戳显示：关")
-        }
-        cbChunkNewline.setOnCheckedChangeListener { _, checked ->
-            chunkNewline = checked
-            appendLine(if (checked) "分包换行：开" else "分包换行：关")
-        }
         view.findViewById<View>(R.id.sendButton).setOnClickListener { send() }
 
         view.findViewById<ImageButton>(R.id.moreButton).setOnClickListener { anchor ->
             MoreMenu.show(
                 anchor,
                 listOf(
-                    MoreMenu.Item(R.drawable.ic_tune, "设置烧录参数") {
-                        (activity as? MainActivity)?.openFlashTab()
-                    },
+                    MoreMenu.Item(R.drawable.ic_tune, "设置串口参数") { showSerialParams() },
                     MoreMenu.Item(R.drawable.ic_reset, "设备复位重启") { resetDevice() },
                     MoreMenu.Item(R.drawable.ic_share, "导出串口日志") { exportLog() },
                     MoreMenu.Item(R.drawable.ic_copy, "复制串口日志") { copyLog() }
                 )
             )
-        }
-
-        baudSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val l = link ?: return
-                PortBus.baud = currentBaud()
-                if (l.setBaud(currentBaud())) {
-                    appendLine("波特率切到 ${currentBaud()}")
-                    updateStatus(connected = true)
-                }
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
         input.setOnEditorActionListener { _, actionId, _ ->
@@ -143,24 +94,32 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
         refreshDevices()
     }
 
-    /** Activity 派发触摸时调用：面板展开期间，点面板以外的任何地方都收起 */
+    private fun prefs() = requireContext()
+        .getSharedPreferences("espburn", android.content.Context.MODE_PRIVATE)
+
+    /** ⋮ 菜单「设置串口参数」：只留波特率，选中就立刻下发 */
+    private fun showSerialParams() {
+        val items = bauds.map { if (it.toIntOrNull() == baudRate) "$it（当前）" else it }
+        Dialogs.list(requireContext(), "设置串口参数", items) { idx ->
+            val b = bauds.getOrNull(idx)?.toIntOrNull() ?: return@list
+            baudRate = b
+            PortBus.baud = b
+            prefs().edit().putInt("serialBaud", b).apply()
+            val l = link
+            if (l == null) {
+                toast("波特率设为 $b，连接时生效")
+            } else if (l.setBaud(b)) {
+                toast("波特率切到 $b")
+                updateStatus(connected = true)
+            } else {
+                toast("切换波特率失败")
+            }
+        }
+    }
+
+    /** Activity 派发触摸时调用：设置面板已经删掉，这里保留空实现兼容旧调用 */
     fun collapseIfOutside(ev: android.view.MotionEvent) {
-        if (!this::optionsPanel.isInitialized) return
-        if (optionsPanel.visibility != View.VISIBLE) return
-        val loc = IntArray(2)
-        optionsPanel.getLocationOnScreen(loc)
-        val x = ev.rawX.toInt()
-        val y = ev.rawY.toInt()
-        val inside = x >= loc[0] && x <= loc[0] + optionsPanel.width &&
-                y >= loc[1] && y <= loc[1] + optionsPanel.height
-        if (inside) return
-        val tl = IntArray(2)
-        tuneView?.getLocationOnScreen(tl)
-        val tw = tuneView?.width ?: 0
-        val th = tuneView?.height ?: 0
-        val onTune = x >= tl[0] && x <= tl[0] + tw && y >= tl[1] && y <= tl[1] + th
-        if (onTune) return
-        optionsPanel.visibility = View.GONE
+        // 串口页已无展开面板，无需收起
     }
 
     private fun refreshDevices() {
@@ -417,7 +376,7 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
                 if (n < 0) {
                     if (sb.isNotEmpty()) {
                         val left = sb.toString(); sb.setLength(0)
-                        withContext(Dispatchers.Main) { appendToScreen(formatChunk(left)) }
+                        withContext(Dispatchers.Main) { appendToScreen(left) }
                     }
                     withContext(Dispatchers.Main) {
                         appendLine("串口已断开")
@@ -426,18 +385,13 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
                     break
                 }
                 if (n > 0) {
-                    if (hexDisplay) {
-                        sb.append(buf.copyOfRange(0, n).joinToString(" ") { String.format("%02X", it) })
-                        sb.append(' ')
-                    } else {
-                        sb.append(String(buf, 0, n, Charsets.UTF_8))
-                    }
+                    sb.append(String(buf, 0, n, Charsets.UTF_8))
                     val now = SystemClock.uptimeMillis()
                     if (sb.length >= 1536 || now - lastFlush >= 100) {
                         val chunk = sb.toString()
                         sb.setLength(0)
                         lastFlush = now
-                        withContext(Dispatchers.Main) { appendToScreen(formatChunk(chunk)) }
+                        withContext(Dispatchers.Main) { appendToScreen(chunk) }
                     }
                 }
             }
@@ -461,19 +415,6 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
         toast("已发送复位")
     }
 
-    private fun formatChunk(raw: String): String {
-        val stamp = "[" + timeFmt.format(Date()) + "] "
-        var s = raw
-        if (cbChunkNewline.isChecked && !s.endsWith("\n")) s += "\n"
-        if (cbTimestamp.isChecked) {
-            val parts = s.split("\n")
-            s = parts.mapIndexed { i, line ->
-                if (line.isEmpty()) line else stamp + line
-            }.joinToString("\n").let { it }
-        }
-        return s
-    }
-
     private fun disconnect() {
         readerJob?.cancel()
         readerJob = null
@@ -489,20 +430,10 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
         }
         val text = input.text.toString()
         if (text.isEmpty()) return
-        val bytes = if (hexDisplay) {
-            val hex = text.replace(" ", "").replace("\n", "")
-            if (hex.length % 2 != 0 || hex.any { Character.digit(it, 16) < 0 }) {
-                toast("HEX 格式不对")
-                return
-            }
-            ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-        } else {
-            (text + "\n").toByteArray(Charsets.UTF_8)
-        }
+        val bytes = (text + "\n").toByteArray(Charsets.UTF_8)
         val ok = runCatching { l.writeAll(bytes, bytes.size, 500) }.getOrDefault(false)
         if (ok) {
-            val echo = if (hexDisplay) bytes.joinToString(" ") { String.format("%02X", it) } else text
-            appendToScreen("→ $echo\n")
+            appendToScreen("→ $text\n")
             input.setText("")
         } else {
             appendLine("发送失败")
@@ -563,7 +494,7 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
         else -> 0xFFAFC3F7.toInt()
     }
 
-    /** 上屏：去掉行首的等级字母，(时间戳) 按等级上色，括号本身灰白 */
+    /** 上屏：去掉行首的等级字母，括号里的毫秒数换算成时间，按等级上色，括号本身灰白 */
     private fun appendWithBlueStart(text: CharSequence) {
         val cur = serialLog.text
         val raw = text.toString()
@@ -579,23 +510,44 @@ class SerialFragment : Fragment(R.layout.fragment_serial) {
                 level = line[0].uppercaseChar()
                 line = line.substring(2)
             }
-            val base = sb.length
-            sb.append(line)
+            // 括号里是 ESP-IDF 开机毫秒数（如 I (398)），换成 mm:ss.mmm 更好读
             val open = line.indexOf('(')
             val close = line.indexOf(')')
             if (open >= 0 && close > open && close - open <= 12) {
+                val digits = line.substring(open + 1, close)
+                val ms = digits.toLongOrNull()
+                if (ms != null) {
+                    line = line.substring(0, open + 1) + msToClock(ms) + line.substring(close)
+                }
+            }
+            val base = sb.length
+            sb.append(line)
+            val o = line.indexOf('(')
+            val c = line.indexOf(')')
+            if (o >= 0 && c > o && c - o <= 16) {
                 sb.setSpan(android.text.style.ForegroundColorSpan(0xFFCFCFD8.toInt()),
-                    base, base + open + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    base, base + o + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 sb.setSpan(android.text.style.ForegroundColorSpan(tsColor(level)),
-                    base + open + 1, base + close, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    base + o + 1, base + c, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 sb.setSpan(android.text.style.ForegroundColorSpan(0xFFCFCFD8.toInt()),
-                    base + close, base + close + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    base + c, base + c + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
             if (nl < raw.length) sb.append('\n')
             lineStart = nl < raw.length
             pos = nl + 1
         }
         serialLog.append(sb)
+    }
+
+    /** 开机毫秒数 → 00:00.39 / 1:02:03.45（毫秒只留两位，按 10ms 取整） */
+    private fun msToClock(ms: Long): String {
+        val total = ms / 1000
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        val centi = (ms % 1000) / 10
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d.%02d", h, m, s, centi)
+        else String.format(Locale.US, "%02d:%02d.%02d", m, s, centi)
     }
 
     private fun appendRaw(text: String) {

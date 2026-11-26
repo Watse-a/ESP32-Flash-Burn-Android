@@ -30,6 +30,8 @@ static jmethodID m_progress;
 static esp_loader_t g_loader;
 static esp_loader_port_t g_port;
 static bool g_inited;
+/** 连接时从 ROM 侧读到的 Flash 容量；stub 连接会把 loader 里的值清 0，这里留底给擦除用 */
+static uint32_t g_flash_size;
 static volatile uint32_t g_tx_count, g_rx_count;
 
 #define LOG_TAG "EspFlasherJNI"
@@ -216,6 +218,7 @@ JNIEXPORT void JNICALL
 Java_com_espflash_burn_NativeFlasher_nativeAttach(JNIEnv *env, jobject thiz, jobject link)
 {
     (void)thiz;
+    g_flash_size = 0;   // 新的一次连接，容量重新读，避免换板后沿用旧值
     if (g_link) {
         (*env)->DeleteGlobalRef(env, g_link);
         g_link = NULL;
@@ -261,8 +264,20 @@ Java_com_espflash_burn_NativeFlasher_nativeConnect(JNIEnv *env, jobject thiz,
     g_read_ok = 0;
     g_read_timeouts = 0;
     if (want_stub == JNI_TRUE) {
-        // 压缩写入（FLASH_DEFL_*）和高速擦写都要靠芯片里的 flasher stub，
-        // ROM 只认基础命令，所以先让库把自带 stub 下载进 RAM 并跑起来。
+        // stub 连接会把 _target_flash_size 清 0 且不探测容量，而擦除/写入的超时是按容量算的。
+        // 先用 ROM 身份同步一次，把真实容量读出来存到 g_flash_size，再下载 stub。
+        esp_loader_error_t rom = esp_loader_connect(&g_loader, &args);
+        if (rom == ESP_LOADER_SUCCESS) {
+            if (g_loader._target_flash_size != 0) {
+                g_flash_size = g_loader._target_flash_size;
+            } else {
+                uint32_t fs = 0;
+                if (esp_loader_flash_detect_size(&g_loader, &fs) == ESP_LOADER_SUCCESS && fs != 0) {
+                    g_loader._target_flash_size = fs;
+                    g_flash_size = fs;
+                }
+            }
+        }
         err = esp_loader_connect_with_stub(&g_loader, &args);
         if (err != ESP_LOADER_SUCCESS) {
             jb_log(2, "stub 启动失败，退回 ROM 直连");
@@ -274,6 +289,21 @@ Java_com_espflash_burn_NativeFlasher_nativeConnect(JNIEnv *env, jobject thiz,
         err = esp_loader_connect(&g_loader, &args);
     }
     g_inited = (err == ESP_LOADER_SUCCESS);
+    if (g_inited) {
+        if (g_loader._stub_running) {
+            // stub 连接会把 _target_flash_size 置 0，把 ROM 阶段读到的容量还回去，
+            // 否则擦除/写入的超时按 0 算（只有 3 秒），16 MB 擦除必然被判超时
+            if (g_flash_size != 0) g_loader._target_flash_size = g_flash_size;
+        } else if (g_loader._target_flash_size == 0) {
+            uint32_t fs = 0;
+            if (esp_loader_flash_detect_size(&g_loader, &fs) == ESP_LOADER_SUCCESS) {
+                g_loader._target_flash_size = fs;
+                g_flash_size = fs;
+            }
+        } else {
+            g_flash_size = g_loader._target_flash_size;
+        }
+    }
     {
         JNIEnv *e2 = env_get();
         if (e2 && g_link && m_logline) {
@@ -358,8 +388,7 @@ Java_com_espflash_burn_NativeFlasher_nativeSetSpeed(JNIEnv *env, jobject thiz, j
 JNIEXPORT jint JNICALL
 Java_com_espflash_burn_NativeFlasher_nativeFlashFile(JNIEnv *env, jobject thiz,
                                                          jlong offset, jbyteArray data,
-                                                         jint block_size, jboolean verify,
-                                                         jobject sink)
+                                                         jint block_size, jobject sink)
 {
     (void)thiz;
     if (!g_inited) return (jint)ESP_LOADER_ERROR_FAIL;
@@ -374,7 +403,7 @@ Java_com_espflash_burn_NativeFlasher_nativeFlashFile(JNIEnv *env, jobject thiz,
         .offset = (uint32_t)offset,
         .image_size = (uint32_t)len,
         .block_size = (uint32_t)(block_size > 0 ? block_size : 4096),
-        .skip_verify = (verify == JNI_TRUE) ? false : true,
+        .skip_verify = true,   // 不做写后 MD5 回读校验（省掉整套回读时间）
     };
     esp_loader_error_t err = esp_loader_flash_start(&g_loader, &cfg);
     if (err != ESP_LOADER_SUCCESS) {
@@ -382,12 +411,8 @@ Java_com_espflash_burn_NativeFlasher_nativeFlashFile(JNIEnv *env, jobject thiz,
         return (jint)err;
     }
 
-    jb_logf("擦除并写入：偏移 0x%X，%u 字节，块 %u 字节",
-            (unsigned)cfg.offset, (unsigned)cfg.image_size, (unsigned)cfg.block_size);
-
     uint32_t written = 0;
     int last_pct = -1;
-    int last_step = -1;
     while (written < (uint32_t)len) {
         uint32_t chunk = (uint32_t)len - written;
         if (chunk > cfg.block_size) chunk = cfg.block_size;
@@ -398,11 +423,6 @@ Java_com_espflash_burn_NativeFlasher_nativeFlashFile(JNIEnv *env, jobject thiz,
             break;
         }
         written += chunk;
-        int step = (int)(written * 10u / (uint32_t)len);
-        if (step != last_step) {
-            last_step = step;
-            jb_logf("写入进度：%u/%u 字节（%d%%）", (unsigned)written, (unsigned)len, step * 10);
-        }
         int pct = (int)((uint64_t)written * 100u / (uint64_t)len);
         if (pct != last_pct && sink && m_progress) {
             last_pct = pct;
@@ -415,8 +435,7 @@ Java_com_espflash_burn_NativeFlasher_nativeFlashFile(JNIEnv *env, jobject thiz,
 
     err = esp_loader_flash_finish(&g_loader, &cfg);
     if (err == ESP_LOADER_SUCCESS)
-        jb_logf("写入结束：%u 字节，校验%s", (unsigned)len,
-                cfg.skip_verify ? "跳过" : "已通过");
+        jb_logf("写入结束：%u 字节", (unsigned)len);
     else
         jb_logf("收尾失败：错误码 %d", (int)err);
     return (jint)err;
@@ -428,7 +447,59 @@ Java_com_espflash_burn_NativeFlasher_nativeEraseChip(JNIEnv *env, jobject thiz)
     (void)env;
     (void)thiz;
     if (!g_inited) return (jint)ESP_LOADER_ERROR_FAIL;
-    return (jint)esp_loader_flash_erase(&g_loader);
+
+    uint32_t flash_size = g_loader._target_flash_size;
+    if (flash_size == 0) flash_size = g_flash_size;
+    if (flash_size == 0 && !g_loader._stub_running) {
+        esp_loader_error_t derr = esp_loader_flash_detect_size(&g_loader, &flash_size);
+        if (derr != ESP_LOADER_SUCCESS) {
+            jb_logf("擦除：读取 Flash 容量失败（错误码 %d），按未知容量继续", (int)derr);
+            flash_size = 0;
+        }
+    }
+    // 把容量写回 loader：擦除命令的超时是按容量算的（10 秒/MB，最少 3 秒）
+    if (flash_size != 0) g_loader._target_flash_size = flash_size;
+    jb_logf("擦除：模式 %s，Flash 容量 %u 字节",
+            g_loader._stub_running ? "stub" : "ROM", (unsigned)flash_size);
+    jb_logf("开始整片擦除");
+
+    esp_loader_error_t err = esp_loader_flash_erase(&g_loader);
+    if (err != ESP_LOADER_SUCCESS) {
+        jb_logf("擦除命令失败：错误码 %d", (int)err);
+        return (jint)err;
+    }
+    jb_logf("擦除命令已返回，读回关键区域确认");
+
+    // read-back：擦完不一定真擦干净（尤其 ROM 的 24 位地址边界），读几个关键位置较真
+    uint32_t probes[4];
+    int n = 0;
+    probes[n++] = 0x0;
+    probes[n++] = 0x8000;                    // 分区表
+    if (0x10000 < flash_size) probes[n++] = 0x10000;   // APP 起始
+    if (flash_size >= 0x2000) probes[n++] = (flash_size - 0x1000) & 0xFFFFF000u; // 末尾扇区
+
+    uint8_t buf[256];
+    for (int i = 0; i < n; i++) {
+        uint32_t addr = probes[i];
+        uint32_t len = (uint32_t)sizeof(buf);
+        if (flash_size > 0 && addr + len > flash_size) len = flash_size - addr;
+        if (len < 4) continue;
+        err = esp_loader_flash_read(&g_loader, buf, addr, len);
+        if (err == ESP_LOADER_SUCCESS) {
+            for (uint32_t k = 0; k < len; k++) {
+                if (buf[k] != 0xFF) {
+                    jb_logf("擦除未生效：0x%X 处仍是 0x%02X", (unsigned)(addr + k), buf[k]);
+                    return (jint)ESP_LOADER_ERROR_FAIL;
+                }
+            }
+            jb_logf("读回 0x%X：%u 字节全为 0xFF", (unsigned)addr, (unsigned)len);
+        } else {
+            // 个别固件没开读命令时不至于把整片擦除判成失败，记一行继续
+            jb_logf("读回 0x%X 失败：错误码 %d（无法复核）", (unsigned)addr, (int)err);
+        }
+    }
+    jb_logf("擦除完成");
+    return (jint)ESP_LOADER_SUCCESS;
 }
 
 JNIEXPORT jint JNICALL
@@ -466,55 +537,6 @@ Java_com_espflash_burn_NativeFlasher_nativeReadFlash(JNIEnv *env, jobject thiz,
         }
     }
     fclose(f);
-    return (jint)err;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_espflash_burn_NativeFlasher_nativeFlashFileDeflate(JNIEnv *env, jobject thiz,
-                                                               jlong offset, jbyteArray data,
-                                                               jlong image_size, jint block_size,
-                                                               jobject sink)
-{
-    (void)thiz;
-    if (!g_inited) return (jint)ESP_LOADER_ERROR_FAIL;
-    jsize len = (*env)->GetArrayLength(env, data);
-    if (len <= 0 || image_size <= 0) return (jint)ESP_LOADER_ERROR_INVALID_PARAM;
-
-    uint8_t *buf = (uint8_t *)malloc((size_t)len);
-    if (!buf) return (jint)ESP_LOADER_ERROR_FAIL;
-    (*env)->GetByteArrayRegion(env, data, 0, len, (jbyte *)buf);
-
-    esp_loader_flash_deflate_cfg_t cfg = {
-        .offset = (uint32_t)offset,
-        .image_size = (uint32_t)image_size,
-        .compressed_size = (uint32_t)len,
-        .block_size = (uint32_t)(block_size > 0 ? block_size : 4096),
-    };
-    esp_loader_error_t err = esp_loader_flash_deflate_start(&g_loader, &cfg);
-    if (err != ESP_LOADER_SUCCESS) {
-        free(buf);
-        return (jint)err;
-    }
-
-    uint32_t sent = 0;
-    int last_pct = -1;
-    while (sent < (uint32_t)len) {
-        uint32_t chunk = (uint32_t)len - sent;
-        if (chunk > cfg.block_size) chunk = cfg.block_size;
-        err = esp_loader_flash_deflate_write(&g_loader, &cfg, buf + sent, chunk);
-        if (err != ESP_LOADER_SUCCESS) break;
-        sent += chunk;
-        int pct = (int)((uint64_t)sent * 100u / (uint64_t)len);
-        if (pct != last_pct && sink && m_progress) {
-            last_pct = pct;
-            (*env)->CallVoidMethod(env, sink, m_progress, pct);
-            check_exception(env);
-        }
-    }
-    free(buf);
-    if (err != ESP_LOADER_SUCCESS) return (jint)err;
-
-    err = esp_loader_flash_deflate_finish(&g_loader, &cfg);
     return (jint)err;
 }
 

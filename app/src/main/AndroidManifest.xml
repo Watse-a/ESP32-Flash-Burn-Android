@@ -27,12 +27,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-            </intent-filter>
-            <meta-data
-                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                android:resource="@xml/usb_device_filter" />
+            <!-- 不再声明 USB_DEVICE_ATTACHED 过滤器：
+                 擦空后芯片没有固件会反复重启、USB 反复重枚举，
+                 带过滤器会被系统每次插上都拉起来并弹一次授权框，形成"断开重连"的假象。
+                 App 自己用广播监听插拔，不需要系统拉起。 -->
         </activity>
     </application>
     <uses-permission android:name="android.permission.INTERNET" />

@@ -30,15 +30,6 @@ object NativeFlasher {
         offset: Long,
         data: ByteArray,
         blockSize: Int,
-        verify: Boolean,
-        sink: ProgressSink?
-    ): Int
-
-    external fun nativeFlashFileDeflate(
-        offset: Long,
-        data: ByteArray,
-        imageSize: Long,
-        blockSize: Int,
         sink: ProgressSink?
     ): Int
 

@@ -35,7 +35,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     private data class PendingFile(
         val name: String,
         val size: Long,
-        var offset: Long,
+        var offset: Long?,
         val data: ByteArray,
         val chip: String?,
         val idf: String?,
@@ -58,11 +58,11 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     private lateinit var infoPanel: LinearLayout
     private var compactViews: List<android.view.View>? = null
     private lateinit var logText: TextView
+    private lateinit var logLive: TextView
     private var stickLogBottom = true
     private lateinit var paramLine: TextView
-    private lateinit var cbAutoReset: android.widget.CheckBox
-    private lateinit var cbHighSpeed: android.widget.CheckBox
-    private lateinit var cbCompress: android.widget.CheckBox
+    private lateinit var cbAutoReset: android.widget.Switch
+    private lateinit var cbHighSpeed: android.widget.Switch
 
     private val files = mutableListOf<PendingFile>()
     private val rowInputs = mutableListOf<Pair<String, EditText>>()
@@ -102,7 +102,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         clearInfoRows()
         visLog.setLength(0)
         rawLog.setLength(0)
-        liveAt = -1
+        clearLiveLine()
         logText.setText("")
         logScroll.scrollTo(0, 0)
         fileSummary.text = ""
@@ -137,10 +137,10 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             v.findViewById<android.view.View>(R.id.fileList)
         )
         logText = v.findViewById(R.id.logText)
+        logLive = v.findViewById(R.id.logLive)
         paramLine = v.findViewById(R.id.paramLine)
         cbAutoReset = v.findViewById(R.id.cbAutoReset)
         cbHighSpeed = v.findViewById(R.id.cbHighSpeed)
-        cbCompress = v.findViewById(R.id.cbCompress)
         bindLogScroll()
         return v
     }
@@ -166,12 +166,6 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         cbHighSpeed.isChecked = prefs0().getBoolean("highSpeed", true)
         cbAutoReset.setOnCheckedChangeListener { _, v -> prefs0().edit().putBoolean("autoReset", v).apply() }
         cbHighSpeed.setOnCheckedChangeListener { _, v -> prefs0().edit().putBoolean("highSpeed", v).apply() }
-        cbCompress.isChecked = prefs0().getBoolean("compress", false)
-        cbCompress.setOnCheckedChangeListener { c, v ->
-            prefs0().edit().putBoolean("compress", v).apply()
-            // 压缩靠 Stub 实时解压，勾选时自动把加速模式打开
-            if (v && !cbHighSpeed.isChecked) cbHighSpeed.isChecked = true
-        }
         updateParamLine()
         view.findViewById<ImageButton>(R.id.moreButton).setOnClickListener { anchor ->
             MoreMenu.show(
@@ -188,21 +182,6 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         refreshDevices()
     }
 
-    /** zlib 压缩（stub 侧用 miniz 实时解压） */
-    private fun deflate(src: ByteArray): ByteArray {
-        val d = java.util.zip.Deflater(9)
-        d.setInput(src)
-        d.finish()
-        val out = java.io.ByteArrayOutputStream(src.size / 2)
-        val buf = ByteArray(16384)
-        while (!d.finished()) {
-            val n = d.deflate(buf)
-            if (n > 0) out.write(buf, 0, n) else break
-        }
-        d.end()
-        return out.toByteArray()
-    }
-
     /** 设置烧录参数：型号 / 波特率 / 频率 / 模式 / 大小，点字段弹出列表选择 */
     private fun showFlashParams() {
         val ctx = requireContext()
@@ -215,15 +194,18 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         val freqs = listOf("keep", "80m", "40m", "26m", "20m", "16m", "12m")
         val modes = listOf("dio", "qio", "dout", "qout")
         val sizes = listOf("keep", "1MB", "2MB", "4MB", "8MB", "16MB", "32MB")
+        val blocks = listOf("16k", "8k", "4k", "1k")
 
         val fields = listOf(
             Triple(R.id.pChip, "选择芯片型号", chips) to "pChip",
             Triple(R.id.pBaud, "选择波特率", bauds) to "flashBaud",
             Triple(R.id.pFreq, "选择闪存频率", freqs) to "pFreq",
             Triple(R.id.pMode, "选择闪存模式", modes) to "pMode",
-            Triple(R.id.pSize, "选择闪存大小", sizes) to "pSize"
+            Triple(R.id.pSize, "选择闪存大小", sizes) to "pSize",
+            Triple(R.id.pBlock, "选择加速块大小", blocks) to "blockKb"
         )
-        val defaults = mapOf("pChip" to "auto", "flashBaud" to "115200", "pFreq" to "keep", "pMode" to "dio", "pSize" to "keep")
+        val defaults = mapOf("pChip" to "auto", "flashBaud" to "115200", "pFreq" to "keep",
+            "pMode" to "dio", "pSize" to "keep", "blockKb" to "16k")
 
         fields.forEach { pair ->
             val (spec, key) = pair
@@ -245,9 +227,11 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             val freq = v.findViewById<TextView>(R.id.pFreq).text.toString()
             val mode = v.findViewById<TextView>(R.id.pMode).text.toString()
             val size = v.findViewById<TextView>(R.id.pSize).text.toString()
+            val block = v.findViewById<TextView>(R.id.pBlock).text.toString()
             prefs.edit()
                 .putString("pChip", chip).putString("flashBaud", baud)
                 .putString("pFreq", freq).putString("pMode", mode).putString("pSize", size)
+                .putString("blockKb", block)
                 .apply()
             PortBus.baud = baud.toIntOrNull() ?: 115200
             d.dismiss()
@@ -570,23 +554,36 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
 
     private fun selectedDevice(): UsbDevice? = devices.getOrNull(selectedIndex)
 
-    /** 文件名里的 0xXXXX 直接当作偏移；否则按常见分区名猜一个 */
-    private fun guessOffset(name: String): Long {
+    /**
+     * 自动识别烧录偏移；识别不出来返回 null（输入框留空，由用户手填）。
+     * 优先级：文件名显式 0xXXXX > 文件名关键字 > 文件头特征 > 整包体积判定 > 应用镜像头。
+     */
+    private fun detectOffset(name: String, b: ByteArray): Long? {
         Regex("(?i)0x([0-9a-f]{3,8})").find(name)?.let { m ->
             return m.groupValues[1].toLong(16)
         }
         val n = name.lowercase()
-        return when {
-            "bootloader" in n -> 0x0
-            "partition" in n -> 0x8000
-            "boot_app0" in n -> 0xE000
-            "otadata" in n -> 0xD000
-            "model0" in n -> 0x190000
-            "model1" in n -> 0x510000
-            "model2" in n -> 0x890000
-            "model3" in n -> 0xC10000
-            else -> 0x10000
+        when {
+            "bootloader" in n -> return 0x0
+            "partition" in n -> return 0x8000
+            "boot_app0" in n -> return 0xE000
+            "otadata" in n -> return 0xD000
+            "model0" in n -> return 0x190000
+            "model1" in n -> return 0x510000
+            "model2" in n -> return 0x890000
+            "model3" in n -> return 0xC10000
         }
+        fun at(i: Int) = if (i < b.size) b[i].toInt() and 0xFF else -1
+        // 分区表镜像：头两字节 AA 50
+        if (at(0) == 0xAA && at(1) == 0x50) return 0x8000
+        // ≥8MB 的整包镜像（merged full-flash），从 0x0 整片烧
+        if (b.size >= 8 * 1024 * 1024) return 0x0
+        // 应用镜像：magic E9 + 0x20 处 app_desc magic ABCD5432
+        if (b.size >= 0x100 && at(0) == 0xE9) {
+            val magic = at(0x20) or (at(0x21) shl 8) or (at(0x22) shl 16) or (at(0x23) shl 24)
+            if (magic == 0xABCD5432.toInt()) return 0x10000
+        }
+        return null
     }
 
     /** 允许的固件后缀 */
@@ -637,7 +634,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             throw IllegalIOException("这个文件其实是压缩包（改了后缀也一样），先解压出 .bin 再添加")
         }
         val info = probeImage(bytes)
-        val offset = guessOffset(name)
+        val offset = detectOffset(name, bytes)
         files.add(PendingFile(name, bytes.size.toLong(), offset, bytes, info.first, info.second, info.third))
     }
 
@@ -720,7 +717,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         val f = files.getOrNull(index) ?: return
         val ctx = context ?: return
         val et = EditText(ctx).apply {
-            setText("0x" + f.offset.toString(16))
+            setText(f.offset?.let { "0x" + it.toString(16) } ?: "")
             setTextColor(0xFFE4E4EC.toInt())
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(24, 18, 24, 18)
@@ -729,6 +726,12 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         }
         Dialogs.custom(ctx, "烧录地址", et, "保存") {
             val raw = et.text.toString().trim().removePrefix("0x").removePrefix("0X")
+            if (raw.isEmpty()) {
+                f.offset = null
+                refreshFileList()
+                onSaved?.invoke()
+                return@custom
+            }
             val v = raw.toLongOrNull(16)
             if (v == null) {
                 toast("地址格式不对，例：0x10000")
@@ -762,7 +765,13 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             bindTag(R.id.tagIdf, f.idf?.let { if (it.startsWith("v")) "IDF $it" else "IDF v$it" })
             bindTag(R.id.tagVer, f.ver?.let { if (it.startsWith("v")) it else "v$it" })
             val addrTv = row.findViewById<TextView>(R.id.tagAddr)
-            addrTv.text = "0x" + f.offset.toString(16)
+            val off = f.offset
+            if (off == null) {
+                addrTv.visibility = android.view.View.GONE
+            } else {
+                addrTv.visibility = android.view.View.VISIBLE
+                addrTv.text = "0x" + off.toString(16)
+            }
             addrTv.isClickable = false
             addrTv.isFocusable = false
             bindTag(R.id.tagSize, readableSize(f.size))
@@ -814,7 +823,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         }
     }
 
-    private fun collectOffsets(): List<Long> = files.map { it.offset }
+    private fun collectOffsets(): List<Long?> = files.map { it.offset }
 
 
     /** 报错现场（仅弹窗内展示，不再往文件夹落盘） */
@@ -840,21 +849,21 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 .append(" / 频率 ").append(p.getString("pFreq", "keep"))
                 .append(" / 模式 ").append(p.getString("pMode", "dio"))
                 .append(" / 大小 ").append(p.getString("pSize", "keep"))
+                .append(" / 块 ").append(p.getString("blockKb", "16k"))
                 .append(" / 自动进下载 ").append(if (p.getBoolean("autoReset", true)) "开" else "关")
                 .append(" / 加速 ").append(if (p.getBoolean("highSpeed", true)) "开" else "关")
-                .append(" / 压缩 ").append(if (p.getBoolean("compress", false)) "开" else "关")
                 .append('\n')
             append("固件    ：").append(files.size).append(" 个\n")
             files.forEachIndexed { i, f ->
+                val off = f.offset?.let { "0x" + it.toString(16) } ?: "未填"
                 append("  ").append(i + 1).append(". ").append(f.name)
-                    .append("  ").append(f.size).append(" 字节  偏移 0x")
-                    .append(f.offset.toString(16)).append('\n')
+                    .append("  ").append(f.size).append(" 字节  偏移 ").append(off).append('\n')
             }
             append("\n==== 过程日志 ====\n").append(logText.text)
             append("\n==== 内部日志（最近 200 行）====\n").append(L.logFileText(200))
             append('\n')
         }
-        return null
+        return report
     }
 
     /** 烧录进度：细长条 + 左侧说明 + 右侧百分比 */
@@ -889,7 +898,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     /** 打开串口：303A 原生 USB 优先走原生 CDC bulk，通路可疑时再退回库 */
     private fun openLink(link: SerialLink): Boolean {
         val ok = link.open { uiLog(it) }
-        if (ok) uiLog(link.rawInfo)
+        if (ok && link.rawInfo.isNotBlank()) uiLog(link.rawInfo)
         return ok
     }
 
@@ -920,7 +929,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             uiLog("复位后端口重开失败：设备没回到 USB")
             return false
         }
-        uiLog("复位后已重新打开端口：${link.rawInfo}")
+        uiLog("复位后已重新打开端口" + if (link.rawInfo.isNotBlank()) "：${link.rawInfo}" else "")
         NativeFlasher.nativeAttach(link)
         link.purgeInput()
         return true
@@ -952,7 +961,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         kotlinx.coroutines.delay(150)
         // 复位同样会让 USB-Serial-JTAG 重枚举，旧句柄作废，必须重开
         val reopened = withContext(Dispatchers.IO) { link.reopenAfterReset(2000) }
-        if (reopened) uiLog("复位后已重新打开端口：${link.rawInfo}")
+        if (reopened) uiLog("复位后已重新打开端口" + if (link.rawInfo.isNotBlank()) "：${link.rawInfo}" else "")
         else uiLog("复位后端口重开失败：设备没回到 USB")
     }
 
@@ -1064,14 +1073,17 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
      * 打开串口 → （可选）自动进下载模式 → 连接芯片。
      * 失败返回错误原因，成功回调里已经把 loader 连上。
      */
-    private suspend fun <T> withLoader(device: UsbDevice, body: suspend (SerialLink) -> T): Pair<T?, String?> {
+    private suspend fun <T> withLoader(device: UsbDevice, wantStub: Boolean = false,
+                                       body: suspend (SerialLink) -> T): Pair<T?, String?> {
         val ctx = requireContext().applicationContext
         PortBus.beginExclusive("flash")
         val link = SerialLink(ctx, device)
         try {
             if (!openLink(link)) return null to "打开串口失败"
             NativeFlasher.nativeAttach(link)
-            val err = connectChip(link)
+            // 擦除/读信息也要能看到 native 日志（容量、模式、校验结果都从这里出）
+            link.screenSink = { appendLog(it) }
+            val err = connectChip(link, wantStub)
             if (err != NativeFlasher.OK) {
                 return null to connectDiagnosis(err)
             }
@@ -1122,23 +1134,42 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         Dialogs.confirm(requireContext(), "擦除整片 Flash",
             "会把芯片里所有数据清空，且不可恢复。继续？", okText = "擦除") {
                 val startedAt = System.currentTimeMillis()
+                // 擦除开始同样清屏，只留这一次擦除的日志
+                visLog.setLength(0)
+                clearLiveLine()
+                logText.setText("")
+                rawLog.setLength(0)
                 showProgress(true, -1, "擦除中…")
+                // 擦除是整片擦，16 MB 要二十来秒，秒数往上走，别让人以为卡死了
+                val ticker = lifecycleScope.launch(Dispatchers.Main) {
+                    while (true) {
+                        kotlinx.coroutines.delay(1000)
+                        val sec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(1)
+                        showProgress(true, -1, "擦除中… ${sec}s")
+                    }
+                }
                 job = lifecycleScope.launch(Dispatchers.Default) {
-                    val (ok, err) = withLoader(device) { NativeFlasher.nativeEraseChip() }
+                    // 擦除强制带 stub：ROM 的 FLASH_BEGIN 擦 16 MB 会卡 24 位地址边界，
+                    // 经常“返回成功但没擦掉”，stub 的整片擦除才是 esptool 同款可靠路径
+                    val (ok, err) = withLoader(device, wantStub = true) { NativeFlasher.nativeEraseChip() }
                     val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
                     withContext(Dispatchers.Main) {
+                        ticker.cancel()
                         job = null
                         showProgress(false)
+                        // 复制用完整报告：版本/机型/参数/过程日志/内部日志都带
+                        val report = dumpFlashLog("擦除日志") ?: collectLog()
                         if (ok != null && ok == NativeFlasher.OK) {
                             appendLog("芯片擦除完成")
-                            FlashResult.showOk(requireContext(), seconds, emptyList()) {
-                                (activity as? MainActivity)?.openLogTab()
-                            }
+                            FlashResult.showEraseOk(
+                                requireContext(), seconds,
+                                "全片已擦除\n关键区域 0x0 / 0x8000 / 0x10000 / 末尾扇区 均为 0xFF",
+                                report
+                            )
                         } else {
                             val reason = err ?: ("擦除失败：" + NativeFlasher.errorText(ok ?: -1))
                             appendLog(reason)
-                            dumpFlashLog("擦除日志")
-                            FlashResult.showFail(requireContext(), seconds, reason, collectLog())
+                            FlashResult.showEraseFail(requireContext(), seconds, reason, report)
                         }
                     }
                 }
@@ -1181,11 +1212,14 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             files.forEachIndexed { index, f ->
                 val row = inflater.inflate(R.layout.item_firmware_row, listView, false)
                 row.findViewById<TextView>(R.id.fwName).text = f.name
-                // 副标题：后缀（按类型上色） · x1 · 偏移 · 大小
                 val ext = f.name.substringAfterLast('.', "bin").lowercase()
                 val head = ext.uppercase()
-                val tail = " · " + readableSize(f.size)
-                val sub = android.text.SpannableString(head + tail)
+                // 副标题：后缀（按类型上色） · 自动识别的偏移（红字） · 大小；识别不到就不带偏移段
+                val headText = head
+                val offText = f.offset?.let { "0x" + it.toString(16).uppercase() }
+                val sizeText = readableSize(f.size)
+                val subText = listOfNotNull(headText, offText, sizeText).joinToString(" · ")
+                val sub = android.text.SpannableString(subText)
                 sub.setSpan(
                     android.text.style.ForegroundColorSpan(
                         when (ext) {
@@ -1196,8 +1230,15 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                             "app" -> 0xFF34D399.toInt()
                             else -> 0xFF9AA0AA.toInt()
                         }
-                    ), 0, head.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    ), 0, headText.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
+                if (offText != null) {
+                    val start = headText.length + 3   // 分隔符 " · " 占 3 个字符
+                    sub.setSpan(
+                        android.text.style.ForegroundColorSpan(0xFFF4756B.toInt()),
+                        start, start + offText.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
                 row.findViewById<TextView>(R.id.fwSub).text = sub
                 // 右侧 0x + 下划线：显示自动识别的偏移，点一下可以改
                 // 前缀 0x：0 放大一号、x 保持小号，靠 RelativeSizeSpan 共享同一条基线
@@ -1210,7 +1251,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                     text = pfx
                 }
                 row.findViewById<TextView>(R.id.fwOffset).apply {
-                    text = f.offset.toString(16).uppercase()
+                    text = f.offset?.toString(16)?.uppercase() ?: ""
                     setOnClickListener {
                         editOffset(index) {
                             refreshFileList()
@@ -1305,7 +1346,12 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             toast("固件库里没有勾选任何固件")
             return
         }
-        val offsets = targets.map { it.offset }
+        val noAddr = targets.filter { it.offset == null }
+        if (noAddr.isNotEmpty()) {
+            toast("「${noAddr.first().name}」未填偏移地址")
+            return
+        }
+        val offsets = targets.map { it.offset!! }
         val startedAt = System.currentTimeMillis()
         usbLost = false
 
@@ -1315,7 +1361,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         goodBlock = 0
         // 开始烧录就清屏，并把信息卡输出的那几行字清空（卡片和固件标签保留）
         visLog.setLength(0)
-        liveAt = -1
+        clearLiveLine()
         logText.setText("")
         rawLog.setLength(0)
         fileSummary.text = ""
@@ -1327,7 +1373,6 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         appendLog("========== 开始烧录 ${targets.size} 个文件 ==========")
         appendLog("设备：$devLabel")
         job = lifecycleScope.launch(Dispatchers.Default) {
-            var verify = true
             var failReason: String? = null
             PortBus.beginExclusive("flash")
             val ctx = requireContext().applicationContext
@@ -1341,7 +1386,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 link.screenSink = { appendLog(it) }
                 NativeFlasher.nativeAttach(link)
                 uiStatus("同步芯片…")
-                var err = connectChip(link, cbCompress.isChecked || cbHighSpeed.isChecked)
+                var err = connectChip(link, cbHighSpeed.isChecked)
                 var manualTries = 0
                 while (err != NativeFlasher.OK && manualTries < 2) {
                     manualTries++
@@ -1350,7 +1395,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                     link.purgeInput()
                     Thread.sleep(120)
                     uiStatus("再同步一次（第 ${manualTries + 1} 次）…")
-                    err = NativeFlasher.nativeConnect(400, 12, cbCompress.isChecked || cbHighSpeed.isChecked)
+                    err = NativeFlasher.nativeConnect(400, 12, cbHighSpeed.isChecked)
                 }
                 if (err != NativeFlasher.OK) {
                     failReason = connectDiagnosis(err)
@@ -1365,8 +1410,6 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 val flashBytes = info.substringAfter('|').toLongOrNull() ?: 0L
                 if (mac.isNotBlank()) uiLog("MAC 地址：$mac")
                 if (flashBytes > 0) uiLog("Flash 容量：${readableSize(flashBytes)}")
-                uiLog("自动下载模式：${if (cbAutoReset.isChecked) "开" else "关"}" +
-                        " · 压缩：${if (cbCompress.isChecked) "开" else "关"}")
                 // 型号一致性：固件包里读到的芯片型号必须和板上一致，不同就停下不烧
                 val mismatch = targets.firstOrNull { f -> f.chip != null && !f.chip.equals(chip, true) }
                 if (mismatch != null) {
@@ -1374,9 +1417,17 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                     uiStatus("错误：" + failReason)
                     return@launch
                 }
+                // 加速块大小由「设置烧录参数」决定：16k / 8k / 4k / 1k，默认 16k
+                val blockKb = prefs0().getString("blockKb", "16k") ?: "16k"
+                val selBlock = when (blockKb) {
+                    "1k" -> 1024
+                    "4k" -> 4096
+                    "8k" -> 8192
+                    else -> 16384
+                }
                 if (cbHighSpeed.isChecked) {
                     if (link.isUsbJtag()) {
-                        uiLog("加速：开（原生 USB，写入块 16 KB）")
+                        uiLog("加速：开（原生 USB，写入块 ${selBlock / 1024} KB）")
                     } else {
                         val baud = prefs0().getString("flashBaud", "115200")?.toIntOrNull() ?: 115200
                         val e2 = NativeFlasher.nativeSetSpeed(baud)
@@ -1386,12 +1437,12 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 } else {
                     uiLog("加速：关")
                 }
-                // 原生 USB 靠大块减少往返；16 KB 是官方 esptool 的默认上限，
-                // 实测 24 KB 这块芯片不收，所以封顶 16 KB，被拒仍按 8K→4K 降档。
-                val bigBlock = if (cbHighSpeed.isChecked && link.isUsbJtag()) 16384 else 4096
+                // 原生 USB 靠大块减少往返；16 KB 是实测这块芯片能收的上限，
+                // 被拒（格式错误/参数非法）或首块超时都会自动降到 8K→4K→1K。
+                val bigBlock = if (cbHighSpeed.isChecked && link.isUsbJtag()) selBlock else 4096
                 link.purgeInput()
                 for ((idx, f) in targets.withIndex()) {
-                    val offset = offsets.getOrElse(idx) { f.offset }
+                    val offset = offsets.getOrElse(idx) { f.offset!! }
                     val addr = "0x" + offset.toString(16).uppercase()
                     setLiveLine("正在写入 ${f.name}：0%")
                     val t0 = System.currentTimeMillis()
@@ -1404,17 +1455,14 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                             }
                         }
                     }
-                    val useDeflate = cbCompress.isChecked && cbHighSpeed.isChecked
+                    // 只走普通写入：压缩通道已经整个去掉
                     var e = NativeFlasher.OK
-                    var packed: ByteArray? = null
-                    if (useDeflate) {
-                        packed = deflate(f.data)
-                    }
                     // 分块从大到小试：块越大 ACK 往返越少，速度越快；
                     // 芯片不认某个块尺寸（回包格式错误/参数非法）就降一档。
-                    // 上限就是 16 KB，被拒就 8 KB、4 KB 逐档退
-                    val allSizes = if (useDeflate) intArrayOf(bigBlock, 8192, 4096)
-                                   else intArrayOf(bigBlock, 8192, 4096)
+                    // 起始档位取「设置烧录参数」里的加速块大小（16k/8k/4k/1k），再逐档往下退。
+                    val allSizes = intArrayOf(16384, 8192, 4096, 1024)
+                        .filter { it <= bigBlock }
+                        .toIntArray()
                     // 前面已验证某个档位可用，从它开始，免得每个文件都重撞大块
                     val sizes = if (goodBlock in allSizes)
                         intArrayOf(goodBlock) + allSizes.filter { it != goodBlock && it < goodBlock }
@@ -1422,11 +1470,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                     // 单个文件最多试 3 次：第一次按大块，失败先降档，还不行就整段重写
                     for (attempt in 1..3) {
                         for (bs in sizes.distinct()) {
-                            e = if (useDeflate) {
-                                NativeFlasher.nativeFlashFileDeflate(offset, packed!!, f.data.size.toLong(), bs, sink)
-                            } else {
-                                NativeFlasher.nativeFlashFile(offset, f.data, bs, verify, sink)
-                            }
+                            e = NativeFlasher.nativeFlashFile(offset, f.data, bs, sink)
                             if (e == NativeFlasher.OK) {
                                 if (bs != sizes.first() || goodBlock == 0) {
                                     if (goodBlock != bs) goodBlock = bs
@@ -1545,6 +1589,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     }
 
     private fun uiLog(text: String) {
+        if (text.isBlank()) return
         activity?.runOnUiThread { appendLog(text) }
         L.i(text)
     }
@@ -1556,7 +1601,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         val keys = arrayOf(
             "接口拓扑", "读通道正常", "内部复位跳过",
             "USB-JTAG 复位", "复位：接口", "复位后已", "复位后重新打开",
-            "同步芯片", "同步结果", "握手成功", "串口已打开", "压缩 ", "压缩完成", "识别到芯片"
+            "同步芯片", "同步结果", "握手成功", "串口已打开", "识别到芯片"
         )
         return keys.any { t.contains(it) }
     }
@@ -1584,21 +1629,55 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         else act.runOnUiThread { push() }
     }
 
-    /** 原地更新的那一行（进度会动），不重复刷屏 */
-    private var liveAt = -1
+    /**
+     * 正在刷新的那一行（进度会动）。它单独占 logLive 这个 TextView，
+     * 只在它自己身上 setText，不碰上面整块已定稿日志，避免写入时整屏闪。
+     */
+    private var liveTs = ""
     private fun setLiveLine(text: String) {
-        if (!::logText.isInitialized) return
-        val ts = "[" + java.text.SimpleDateFormat("mm:ss", java.util.Locale.CHINA).format(java.util.Date()) + "] "
-        if (liveAt in 0..visLog.length) visLog.delete(liveAt, visLog.length) else liveAt = visLog.length
-        visLog.append(ts).append(text).append('\n')
-        pushVisible()
+        if (!::logLive.isInitialized) return
+        // 写入线程（DefaultDispatcher）也会调到这里，碰 View 必须切回主线程
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            logLive.post { setLiveLine(text) }
+            return
+        }
+        if (liveTs.isEmpty()) liveTs = stampNow()
+        logLive.text = liveTs + text
+        if (logLive.visibility != android.view.View.VISIBLE) {
+            logLive.visibility = android.view.View.VISIBLE
+        }
+        stickLogBottom = true
+        pinLogToBottom()
     }
 
-    /** 收尾：保留这一行（100%），结束原地刷新 */
+    /** 收尾：把这一行按 100% 定稿进主日志，清掉临时行 */
     private fun finishLiveLine(text: String) {
-        setLiveLine(text)
-        liveAt = -1
+        if (!::logLive.isInitialized) return
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            logLive.post { finishLiveLine(text) }
+            return
+        }
+        if (liveTs.isEmpty()) liveTs = stampNow()
+        visLog.append(liveTs).append(text).append('\n')
+        clearLiveLine()
+        applyVisible()
     }
+
+    private fun clearLiveLine() {
+        if (::logLive.isInitialized &&
+            android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            logLive.post { clearLiveLine() }
+            return
+        }
+        liveTs = ""
+        if (::logLive.isInitialized) {
+            logLive.text = ""
+            logLive.visibility = android.view.View.GONE
+        }
+    }
+
+    private fun stampNow(): String =
+        "[" + java.text.SimpleDateFormat("mm:ss", java.util.Locale.CHINA).format(java.util.Date()) + "] "
 
     private fun appendLog(text: String) {
         // 日志可能来自 native 读线程（link.screenSink），必须在主线程改 TextView，
@@ -1642,6 +1721,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
 
     private fun appendLogOnUi(text: String) {
         if (!::logText.isInitialized) return
+        if (text.isBlank()) return   // 空串不占一行，避免出现只有时间的空行
         val line = "[${java.text.SimpleDateFormat("mm:ss", java.util.Locale.CHINA).format(java.util.Date())}] $text\n"
         // 原始日志全留，复制/报错时给完整版
         rawLog.append(line)
@@ -1660,7 +1740,6 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         if (visLog.count { it == '\n' } > 500) {
             val cut = visLog.indexOf("\n", visLog.length / 4)
             if (cut > 0) visLog.delete(0, cut + 1)
-            liveAt = -1
         }
         visLog.append("[").append(java.text.SimpleDateFormat("mm:ss", java.util.Locale.CHINA).format(java.util.Date()))
             .append("] ").append(shown).append('\n')
@@ -1694,6 +1773,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             if (bottom != oldBottom && stickLogBottom) pinLogToBottom()
         }
     }
+
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 

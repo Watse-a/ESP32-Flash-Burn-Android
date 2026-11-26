@@ -981,7 +981,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
     private suspend fun askManualBoot(): Boolean = withContext(Dispatchers.Main) {
         kotlinx.coroutines.suspendCancellableCoroutine { cont ->
         val ctx = requireContext()
-        Dialogs.confirm(ctx, "需要手动进入BOOT",
+        Dialogs.confirm(ctx, "需要手动进入BOOT模式",
             "板子的 DTR/RTS 自动复位没生效。请按住 BOOT 键，再点一下 RST（或断电重插），然后点「重试」。",
             okText = "重试",
             onCancel = { if (cont.isActive) cont.resume(false) }
@@ -1010,19 +1010,19 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                 return NativeFlasher.nativeConnect(400, 6, true)
             }
             if (!cbAutoReset.isChecked) {
-                uiLog("直接同步失败（${NativeFlasher.errorText(probe)}），自动BOOT已关闭")
+                uiLog("直接同步失败（${NativeFlasher.errorText(probe)}），自动BOOT模式已关闭")
                 return probe
             }
-            uiLog("自动进入BOOT")
+            uiLog("自动进入BOOT模式")
             err = probe
         } else if (cbAutoReset.isChecked) {
             // UART 桥（CH340 等）插着时芯片一般跑着应用，直接同步只会收到它的串口输出
-            uiLog("自动进入 BOOT 模式")
+            uiLog("自动进入BOOT模式")
             err = NativeFlasher.TIMEOUT_CODE
         } else {
             err = NativeFlasher.nativeConnect(400, 8, wantStub)
             if (err == NativeFlasher.OK) return err
-            uiLog("直接同步失败（${NativeFlasher.errorText(err)}），自动BOOT已关闭")
+            uiLog("直接同步失败（${NativeFlasher.errorText(err)}），自动BOOT模式已关闭")
             return err
         }
 
@@ -1062,7 +1062,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         val base = NativeFlasher.errorText(err)
         return when {
             tx > 0 && rx == 0 && rto > 0 ->
-                "串口无响应：发出 $tx 字节无任何回包（读超时 $rto 次），芯片没有在BOOT读串口"
+                "串口无响应：发出 $tx 字节无任何回包（读超时 $rto 次），芯片没有在BOOT模式读串口"
             tx == 0 ->
                 "串口打不开或写不出去：0 字节发出，检查数据线是否支持传输、USB 是否被别的 App 占用"
             else -> "无法与芯片握手（$base）"

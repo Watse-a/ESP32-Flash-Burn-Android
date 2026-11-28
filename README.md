@@ -3,6 +3,8 @@
 ## 安装
 
 - 版本 2.0.2（versionCode 226），arm64-v8a / armeabi-v7a，Android 6.0 及以上
+- 安装包在 [Releases](https://github.com/Watse-a/ESP32-Flash-Burn-Android/releases) 下载，可直接安装的已签名 APK
+- 新版签名证书与 2.0.1 及更早的包不同，覆盖安装需先卸载旧版
 - 首次安装需允许「安装未知来源应用」；应用名为 `ESP-FlashBurn`，包名 `com.espflash.burn`
 
 ---

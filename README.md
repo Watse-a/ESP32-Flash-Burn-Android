@@ -2,7 +2,7 @@
 
 ## 安装
 
-- 版本 2.0.2（versionCode 226），arm64-v8a / armeabi-v7a，Android 6.0 及以上
+- 版本 2.0.22（versionCode 226），arm64-v8a / armeabi-v7a，Android 6.0 及以上
 - 安装包在 [Releases](https://github.com/Watse-a/ESP32-Flash-Burn-Android/releases) 下载，可直接安装的已签名 APK
 - 新版签名证书与 2.0.1 及更早的包不同，覆盖安装需先卸载旧版
 - 首次安装需允许「安装未知来源应用」；应用名为 `ESP-FlashBurn`，包名 `com.espflash.burn`
@@ -13,7 +13,7 @@
 
 - 应用名：ESP-FlashBurn
 - 包名 / namespace：`com.espflash.burn`
-- 版本：2.0.2（versionCode 226）
+- 版本：2.0.22（versionCode 226）
 - 最低系统：Android 6.0（minSdk 23），targetSdk 33
 - ABI：arm64-v8a、armeabi-v7a
 
@@ -38,7 +38,9 @@
 
 **网页后台**
 - 内置 WebView 打开设备自身网页，缩放固定 100%。
-- 识别到设备 IP 后先预热 10 秒，这期间「网页后台」按钮置灰不可点，超时后才放开，避免设备 Web 服务没起来就首载失败。
+- 识别到设备 IP 后先预热 8 秒，这期间「网页后台」按钮置灰不可点，超时后才放开，避免设备 Web 服务没起来就首载失败。
+- 加载前先在后台线程用 `HttpURLConnection` 探测 `http://ip/`，每 800ms 一次、最多 20 次，拿到 200/3xx 才交给 WebView 打开；WebView 确认成功前保持不可见，页面真出来才显示，首开不会停在错误页黑屏。
+- 主框架加载失败过（`onReceivedError` / `onReceivedHttpError`）时，`onPageFinished` 不再判定为成功，改为继续重试（8 次 × 800ms），兜底 WebView 自身加载失败的情况。
 - 支持网页内 `<input type="file">` 选择文件（自定义 `WebChromeClient` + `StartActivityForResult`）。
 
 ## 目录结构
@@ -89,7 +91,7 @@ keyAlias=你的别名
 keyPassword=你的密码
 ```
 
-`app/build.gradle` 会读取该文件；没有它时 `assembleRelease` 产出的是未签名包，自行用 `apksigner` 签一下即可。安装包不入库，需要时本地 `assembleRelease` 自行出包。
+`app/build.gradle` 会读取该文件；没有它时 `assembleRelease` 产出的是未签名包，自行用 `apksigner` 签一下即可。安装包不入库，随 GitHub Release 发布。
 
 ## 运行时文件
 

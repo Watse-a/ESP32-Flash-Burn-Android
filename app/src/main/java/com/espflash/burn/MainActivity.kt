@@ -25,13 +25,17 @@ class MainActivity : AppCompatActivity() {
     private val webHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /** 当前已经加载的地址；采集窗口内如果出现更合适的地址，就换过去 */
     private var webIp: String? = null
-    /** 首次识别到 IP 的时间戳；识别后留 10 秒预热，等设备 Web 服务起来再放开后台按钮 */
+    /** 首次识别到 IP 的时间戳；识别后留 8 秒预热，等设备 Web 服务起来再放开后台按钮 */
     private var webIpAt = 0L
     private var webIpStamped: String? = null
-    private val webWarmupMs = 10_000L
-    /** 拿到地址后 5 秒内每 0.5 秒重试一次，直到页面真的打开 */
+    private val webWarmupMs = 8_000L
+    /** 主框架这一轮加载失败过：此时即使收到 onPageFinished 也是错误页，不算打开成功 */
+    private var mainFrameFailed = false
+    /** 加载失败后自动重试，直到页面真的打开 */
     private var retryLeft = 0
     private var pageOk = false
+    /** 后台探测线程的代次，换地址/收起网页就作废旧探测 */
+    private var probeGen = 0
     /** 网页里「选择文件」按钮的回调，等系统选择器返回后把结果交还给 WebView */
     private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
     private val fileChooser = registerForActivityResult(
@@ -44,10 +48,10 @@ class MainActivity : AppCompatActivity() {
         } else null
         runCatching { cb?.onReceiveValue(result) }
     }
-    /** 预热 10 秒到点后，自动把后台按钮恢复成可点外观 */
+    /** 预热 8 秒到点后，自动把后台按钮恢复成可点外观 */
     private val warmupUnlock = Runnable { markBackLocked(false) }
 
-    /** 每秒看一次镜像里有没有 IP：识别到就开始 10 秒预热计时，不必等用户先点按钮 */
+    /** 每秒看一次镜像里有没有 IP：识别到就开始 8 秒预热计时，不必等用户先点按钮 */
     private val ipWatch = object : Runnable {
         override fun run() {
             mirroredIp()
@@ -58,10 +62,12 @@ class MainActivity : AppCompatActivity() {
     private val webRetry = object : Runnable {
         override fun run() {
             if (pageOk || retryLeft <= 0) return
+            val ip = webIp ?: return
             retryLeft--
             L.i("后台网页没通，重试（剩 $retryLeft 次）")
-            webView?.reload()
-            if (retryLeft > 0) webHandler.postDelayed(this, 500)
+            showWebHint("正在重新打开 http://$ip/ …\n（还剩 $retryLeft 次）")
+            loadUrlDirect("http://$ip/")
+            if (retryLeft > 0) webHandler.postDelayed(this, 800)
         }
     }
     private val webPoll = object : Runnable {
@@ -201,7 +207,7 @@ class MainActivity : AppCompatActivity() {
     /** 烧录页提供的实时状态：只有真在烧/在握手时才锁住底栏「后台」按钮 */
     var flashBusyProvider: (() -> Boolean)? = null
 
-    /** 取镜像里的设备 IP；第一次拿到（或地址换了）时记下时间戳，供 10 秒预热判定 */
+    /** 取镜像里的设备 IP；第一次拿到（或地址换了）时记下时间戳，供预热判定（8 秒） */
     private fun mirroredIp(): String? {
         val ip = SerialMirror.lockedIp() ?: SerialMirror.findIp()
         if (ip != null) {
@@ -275,30 +281,41 @@ class MainActivity : AppCompatActivity() {
                 }
                 webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView, url: String?) {
+                        // 主框架这轮失败过：onPageFinished 落到的是错误页，不能当成打开成功，
+                        // 否则就会停在一张黑屏上不重试，正是以前「首开黑屏、手动刷新才好」的原因
+                        if (mainFrameFailed) {
+                            L.i("后台网页加载完成，但这一轮失败过：$url")
+                            pageOk = false
+                            view.visibility = View.INVISIBLE
+                            return
+                        }
                         L.i("后台网页加载完成：$url")
-                        // 页面自带 viewport（width=device-width, initial-scale=1）时，
-                        // setInitialScale 会被页面的声明覆盖，只能从页面内部缩放
                         applyWebZoom(view)
                         view.visibility = View.VISIBLE
                         pageOk = true
+                        webLoaded = true
+                        webHandler.removeCallbacks(webRetry)
                         webWrap?.findViewById<View>(android.R.id.background)?.visibility = View.GONE
                         webWrap?.findViewById<TextView>(android.R.id.text1)?.visibility = View.GONE
                     }
 
                     override fun onReceivedError(view: android.webkit.WebView, req: android.webkit.WebResourceRequest?, err: android.webkit.WebResourceError?) {
-                        pageOk = false
                         val code = err?.errorCode ?: -1
                         val desc = err?.description?.toString() ?: ""
                         if (req?.isForMainFrame == true) {
+                            mainFrameFailed = true
+                            pageOk = false
                             L.w("后台网页打开失败 code=$code $desc url=${req.url}")
                             view.visibility = View.INVISIBLE
-                            showWebHint("打不开 ${req.url}\n错误码 $code $desc\n手机要连上设备自己的 Wi-Fi 才能访问这个地址")
+                            showWebHint("打不开 ${req.url}\n错误码 $code $desc\n自动重试中，手机要连上设备自己的 Wi-Fi")
                         }
                     }
 
                     override fun onReceivedHttpError(view: android.webkit.WebView, req: android.webkit.WebResourceRequest?, resp: android.webkit.WebResourceResponse?) {
                         if (req?.isForMainFrame == true) {
                             val code = resp?.statusCode ?: -1
+                            mainFrameFailed = true
+                            pageOk = false
                             L.w("后台网页 HTTP 错误 $code ${req.url}")
                             view.visibility = View.INVISIBLE
                             showWebHint("设备返回 HTTP $code\n地址 ${req.url}")
@@ -335,9 +352,10 @@ class MainActivity : AppCompatActivity() {
         wrap.bringToFront()
         excludeSystemGestures(wrap)
         setTabVisual(0)
-        if (webLoaded && webView?.url != null) {
+        if (pageOk && webLoaded && webView?.url != null) {
             // 之前已经加载好：直接显示原页面，不重载
             webWrap?.findViewById<View>(android.R.id.background)?.visibility = View.GONE
+            webWrap?.findViewById<TextView>(android.R.id.text1)?.visibility = View.GONE
             webView?.visibility = View.VISIBLE
             webHandler.postDelayed(webPoll, 1500)
             L.i("打开后台网页：沿用已加载的页面 ${webView?.url}")
@@ -347,7 +365,10 @@ class MainActivity : AppCompatActivity() {
         wrap.findViewById<TextView>(android.R.id.text1)?.visibility = View.VISIBLE
         webHandler.removeCallbacks(webPoll)
         val ip = if (SerialMirror.windowOpenNow()) SerialMirror.findSta() else SerialMirror.findIp()
-        if (ip != null && ip != webIp) loadWeb(ip) else if (webIp == null) {
+        if (ip != null && (ip != webIp || !pageOk)) {
+            // 地址换了，或者上次没打开成功：重新探测一次
+            loadWeb(ip)
+        } else if (webIp == null) {
             showWebHint("正在等待设备的 IP 地址…")
             L.i("后台网页：还没拿到 IP，先黑屏等待")
         }
@@ -386,16 +407,76 @@ class MainActivity : AppCompatActivity() {
         webIp = ip
         val url = "http://$ip/"
         L.i("后台网页加载：$url")
-        webView?.visibility = View.VISIBLE
+        // WebView 先别露出来：先让后台线程把 http 探测通，通了再交给 WebView 打开，
+        // 这样首开不会先落到一张错误页/黑屏上
+        webView?.visibility = View.INVISIBLE
         webWrap?.findViewById<View>(android.R.id.background)?.visibility = View.VISIBLE
-        showWebHint("正在加载 $url …")
         pageOk = false
-        webView?.loadUrl(url)
-        webLoaded = true
-        // 5 秒内每 0.5 秒重试：网络刚起来时第一次请求经常打不开
+        webLoaded = false
         webHandler.removeCallbacks(webRetry)
-        retryLeft = 10
-        webHandler.postDelayed(webRetry, 500)
+        retryLeft = 0
+        showWebHint("正在等待设备后台启动…\n$url")
+        probeAndLoad(ip, 0)
+    }
+
+    /** 后台线程反复探测 http://ip/，通了才让 WebView 加载；不通就一直等，最多约 20 秒 */
+    private fun probeAndLoad(ip: String, attempt: Int) {
+        val gen = ++probeGen
+        Thread {
+            val ok = runCatching { httpReachable(ip) }.getOrDefault(false)
+            webHandler.post {
+                // 地址换了、网页层收起了、或者又开了一轮探测：这轮作废
+                if (gen != probeGen || webIp != ip || webView == null) return@post
+                if (ok) {
+                    showWebHint("设备后台已就绪，正在打开 $ip …")
+                    lazyLoad(ip, attempt)
+                } else if (attempt < 20) {
+                    showWebHint("正在等待设备后台启动…\n$ip（第 ${attempt + 1} 次探测）")
+                    webHandler.postDelayed({ probeAndLoad(ip, attempt + 1) }, 800)
+                } else {
+                    showWebHint("连不上 $ip\n设备 Web 服务还没起来，双击「后台」重试")
+                    L.w("后台探测 20 次都没通：$ip")
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+    }
+
+    /** 裸 http 探测：只要拿到 HTTP 响应头就算服务起来了 */
+    private fun httpReachable(ip: String): Boolean {
+        val c = (java.net.URL("http://$ip/").openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 1500
+            readTimeout = 1800
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Connection", "close")
+        }
+        return runCatching {
+            val code = c.responseCode
+            runCatching { c.inputStream?.close() }
+            code in 200..399
+        }.getOrDefault(false).also { runCatching { c.disconnect() } }
+    }
+
+    /** 探测通了才真正 loadUrl；同时开一路失败重试兜底 */
+    private fun lazyLoad(ip: String, attempt: Int) {
+        val url = "http://$ip/"
+        L.i("后台探测通过，交给 WebView：$url（第 ${attempt + 1} 次）")
+        loadUrlDirect(url)
+    }
+
+    private fun loadUrlDirect(url: String) {
+        val wv = webView ?: return
+        mainFrameFailed = false
+        pageOk = false
+        wv.visibility = View.INVISIBLE
+        webWrap?.findViewById<View>(android.R.id.background)?.visibility = View.VISIBLE
+        wv.loadUrl(url)
+        webLoaded = false
+        // 兜底重试：WebView 自己失败了也不至于停在黑屏上
+        retryLeft = 8
+        webHandler.removeCallbacks(webRetry)
+        webHandler.postDelayed(webRetry, 1200)
     }
 
     /** 双击「后台」刷新：重载当前地址；还没有 IP 就重新等一次 */
@@ -405,6 +486,8 @@ class MainActivity : AppCompatActivity() {
             loadWeb(ip)
         } else {
             webLoaded = false
+            pageOk = false
+            probeGen++
             webHandler.removeCallbacks(webPoll)
             webHandler.postDelayed(webPoll, 500)
         }
@@ -420,11 +503,14 @@ class MainActivity : AppCompatActivity() {
         // 先记下断线时在不在网页后台，再收起网页层
         val onWeb = webWrap?.visibility == View.VISIBLE
         SerialMirror.clear()
-        // 拔出后预热计时作废，插回重新识别 IP 再等 10 秒
+        // 拔出后预热计时作废，插回重新识别 IP 再等 8 秒
         webIpAt = 0L
         webIpStamped = null
         webLoaded = false
+        pageOk = false
+        probeGen++
         webHandler.removeCallbacks(webPoll)
+        webHandler.removeCallbacks(webRetry)
         webWrap?.visibility = View.GONE
         webView?.let { runCatching { it.stopLoading(); it.loadUrl("about:blank") } }
         webLocked = true
@@ -636,7 +722,7 @@ class MainActivity : AppCompatActivity() {
                     L.i("正在烧录，忽略底栏点击")
                     return@setOnClickListener
                 }
-                // 识别到 IP 后先预热 10 秒，等设备 Web 服务起来；期间按钮锁住不可进
+                // 识别到 IP 后先预热 8 秒，等设备 Web 服务起来；期间按钮锁住不可进
                 val backIp = mirroredIp()
                 if (backIp == null) {
                     toastIt("还没从串口读到设备 IP，稍等再点")

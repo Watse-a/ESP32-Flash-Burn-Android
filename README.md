@@ -2,7 +2,7 @@
 
 ## 安装
 
-- 版本 2.0.21（versionCode 225），arm64-v8a / armeabi-v7a，Android 6.0 及以上
+- 版本 2.0.2（versionCode 226），arm64-v8a / armeabi-v7a，Android 6.0 及以上
 - 首次安装需允许「安装未知来源应用」；应用名为 `ESP-FlashBurn`，包名 `com.espflash.burn`
 
 ---
@@ -11,7 +11,7 @@
 
 - 应用名：ESP-FlashBurn
 - 包名 / namespace：`com.espflash.burn`
-- 版本：2.0.21（versionCode 225）
+- 版本：2.0.2（versionCode 226）
 - 最低系统：Android 6.0（minSdk 23），targetSdk 33
 - ABI：arm64-v8a、armeabi-v7a
 

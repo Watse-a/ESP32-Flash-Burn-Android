@@ -87,7 +87,7 @@ keyAlias=你的别名
 keyPassword=你的密码
 ```
 
-`app/build.gradle` 会读取该文件；没有它时 `assembleRelease` 产出的是未签名包，自行用 `apksigner` 签一下即可。仓库里 `release/` 下的 APK 是已签名产物，仅供直接安装。
+`app/build.gradle` 会读取该文件；没有它时 `assembleRelease` 产出的是未签名包，自行用 `apksigner` 签一下即可。安装包不入库，需要时本地 `assembleRelease` 自行出包。
 
 ## 运行时文件
 

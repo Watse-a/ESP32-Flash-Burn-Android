@@ -25,6 +25,10 @@ class MainActivity : AppCompatActivity() {
     private val webHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /** 当前已经加载的地址；采集窗口内如果出现更合适的地址，就换过去 */
     private var webIp: String? = null
+    /** 首次识别到 IP 的时间戳；识别后留 10 秒预热，等设备 Web 服务起来再放开后台按钮 */
+    private var webIpAt = 0L
+    private var webIpStamped: String? = null
+    private val webWarmupMs = 10_000L
     /** 拿到地址后 5 秒内每 0.5 秒重试一次，直到页面真的打开 */
     private var retryLeft = 0
     private var pageOk = false
@@ -40,6 +44,17 @@ class MainActivity : AppCompatActivity() {
         } else null
         runCatching { cb?.onReceiveValue(result) }
     }
+    /** 预热 10 秒到点后，自动把后台按钮恢复成可点外观 */
+    private val warmupUnlock = Runnable { markBackLocked(false) }
+
+    /** 每秒看一次镜像里有没有 IP：识别到就开始 10 秒预热计时，不必等用户先点按钮 */
+    private val ipWatch = object : Runnable {
+        override fun run() {
+            mirroredIp()
+            webHandler.postDelayed(this, 1000)
+        }
+    }
+
     private val webRetry = object : Runnable {
         override fun run() {
             if (pageOk || retryLeft <= 0) return
@@ -109,6 +124,11 @@ class MainActivity : AppCompatActivity() {
             selectTab(false)
             logPage.openWithReset()
         }
+    }
+
+    /** 烧录结束后让串口页在后台静默重连，不必等用户点成功弹窗里的按钮 */
+    fun reconnectSerialAfterFlash() {
+        runCatching { if (::logPage.isInitialized) logPage.autoConnectIfIdle() }
     }
 
     /** 供其它页面跳转到固件烧录页 */
@@ -181,12 +201,29 @@ class MainActivity : AppCompatActivity() {
     /** 烧录页提供的实时状态：只有真在烧/在握手时才锁住底栏「后台」按钮 */
     var flashBusyProvider: (() -> Boolean)? = null
 
+    /** 取镜像里的设备 IP；第一次拿到（或地址换了）时记下时间戳，供 10 秒预热判定 */
+    private fun mirroredIp(): String? {
+        val ip = SerialMirror.lockedIp() ?: SerialMirror.findIp()
+        if (ip != null) {
+            if (ip != webIpStamped) {
+                webIpStamped = ip
+                webIpAt = System.currentTimeMillis()
+                markBackLocked(true)
+                webHandler.removeCallbacks(warmupUnlock)
+                webHandler.postDelayed(warmupUnlock, webWarmupMs)
+            }
+        }
+        return ip
+    }
+
     /** 页面内的设备后台网页：黑底铺满内容区，拿到 IP 才加载 */
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun openDeviceWeb() {
         // 串口里还没出现 IP：不切页面，点一下原地不动
-        if ((SerialMirror.lockedIp() ?: SerialMirror.findIp()) == null) {
+        val gateIp = mirroredIp()
+        if (gateIp == null) {
             L.i("后台网页：没有 IP，留在当前页面")
+            toastIt("还没从串口读到设备 IP，稍等再点")
             return
         }
         val container = findViewById<ViewGroup>(R.id.container)
@@ -383,6 +420,9 @@ class MainActivity : AppCompatActivity() {
         // 先记下断线时在不在网页后台，再收起网页层
         val onWeb = webWrap?.visibility == View.VISIBLE
         SerialMirror.clear()
+        // 拔出后预热计时作废，插回重新识别 IP 再等 10 秒
+        webIpAt = 0L
+        webIpStamped = null
         webLoaded = false
         webHandler.removeCallbacks(webPoll)
         webWrap?.visibility = View.GONE
@@ -578,16 +618,38 @@ class MainActivity : AppCompatActivity() {
             findViewById<View>(R.id.tabBack).setOnClickListener {
                 // 三重判定：拔出标记 + 现场串口设备数 + 已定 IP，缺一个就不让进
                 val serials = runCatching { UsbDevices.list(this) }.getOrDefault(emptyList())
-                if (webLocked || serials.isEmpty()) {
+                if (serials.isEmpty()) {
                     webLocked = true
                     markBackLocked(true)
-                    L.i("USB 已断开（现场设备 ${serials.size} 个），后台网页锁定")
+                    toastIt("设备未连接，后台网页不可用")
+                    L.i("USB 已断开（现场设备 0 个），后台网页锁定")
                     return@setOnClickListener
                 }
+                // 设备在现场：清掉可能因复位重枚举残留的拔出锁定，别让旧锁挡住
+                if (webLocked) {
+                    webLocked = false
+                    markBackLocked(false)
+                    L.i("检测到设备已插回，解除后台网页锁定")
+                }
                 if (flashBusyProvider?.invoke() == true) {
+                    toastIt("正在烧录，稍后再打开后台")
                     L.i("正在烧录，忽略底栏点击")
                     return@setOnClickListener
                 }
+                // 识别到 IP 后先预热 10 秒，等设备 Web 服务起来；期间按钮锁住不可进
+                val backIp = mirroredIp()
+                if (backIp == null) {
+                    toastIt("还没从串口读到设备 IP，稍等再点")
+                    return@setOnClickListener
+                }
+                val remain = webWarmupMs - (System.currentTimeMillis() - webIpAt)
+                if (remain > 0) {
+                    markBackLocked(true)
+                    toastIt("网页后台 ${(remain + 999) / 1000} 秒后可用")
+                    L.i("后台网页预热中，剩余 ${remain}ms")
+                    return@setOnClickListener
+                }
+                markBackLocked(false)
                 val now = android.os.SystemClock.uptimeMillis()
                 val doubleTap = now - lastBackTap < 400
                 lastBackTap = now
@@ -601,6 +663,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             registerUsbLock()
+            webHandler.postDelayed(ipWatch, 1000)
             selectTab(true)
             CrashStore.trail(this, "底部页签绑定完成")
         } catch (t: Throwable) {

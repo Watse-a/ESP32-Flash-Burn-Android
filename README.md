@@ -2,9 +2,7 @@
 
 ## 安装
 
-直接下载安装包：[**ESP-FlashBurn-v2.0.1.apk**](release/ESP-FlashBurn-v2.0.1.apk)
-
-- 版本 2.0.1（versionCode 205），arm64-v8a / armeabi-v7a，Android 6.0 及以上
+- 版本 2.0.21（versionCode 225），arm64-v8a / armeabi-v7a，Android 6.0 及以上
 - 首次安装需允许「安装未知来源应用」；应用名为 `ESP-FlashBurn`，包名 `com.espflash.burn`
 
 ---
@@ -13,7 +11,7 @@
 
 - 应用名：ESP-FlashBurn
 - 包名 / namespace：`com.espflash.burn`
-- 版本：2.0.1（versionCode 205）
+- 版本：2.0.21（versionCode 225）
 - 最低系统：Android 6.0（minSdk 23），targetSdk 33
 - ABI：arm64-v8a、armeabi-v7a
 
@@ -30,13 +28,15 @@
 - 「复制日志」取全量原始日志（含被过滤的行），排错时不会丢信息。
 - 烧录开始时只收起日志区顶部的固件块，结束不自动展开；手动选固件才清屏并展开。
 
-**串口页**
-- 打开端口后按行镜像输出，时间戳 `mm:ss`。
+**串口 / 网络日志页**
+- 打开端口后按行镜像输出，时间戳 `mm:ss`；标题可切换「串口日志 ⇄ 网络日志」。
+- 网络日志先按 TCP 客户端连 IP:端口，连不上退 UDP；IP 留空收任意来源，填了按来源 IP 过滤；可勾选「仅 UDP 监听」。
 - 垃圾桶按钮 / 菜单复位 / 连接后自动复位统一走清屏：清屏幕、清缓冲、清输入队列。
 - 「复制串口日志」取末尾 60 条完整行，按换行边界截断，保证首行完整。
 
 **网页后台**
 - 内置 WebView 打开设备自身网页，缩放固定 100%。
+- 识别到设备 IP 后先预热 10 秒，这期间「网页后台」按钮置灰不可点，超时后才放开，避免设备 Web 服务没起来就首载失败。
 - 支持网页内 `<input type="file">` 选择文件（自定义 `WebChromeClient` + `StartActivityForResult`）。
 
 ## 目录结构

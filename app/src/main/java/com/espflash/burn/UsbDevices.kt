@@ -22,4 +22,11 @@ object UsbDevices {
         // 只留型号和 VID:PID，不显示中文描述
         return "$name · $vid:$pid"
     }
+
+    /**
+     * ROM 下载模式枚举出来的设备（如 ESP32-S2 USB-OTG ROM：303A:0002）。
+     * 这类设备是给烧录用的，串口日志页不主动弹连接框、也不进设备选择列表。
+     */
+    fun isRomMode(device: UsbDevice): Boolean =
+        device.vendorId == 0x303A && device.productId == 0x0002
 }

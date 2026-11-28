@@ -101,6 +101,9 @@ class SerialLink(
         private set
     private var rawItfId = 0
 
+    /** 本次打开成功 claim 下来的接口号，关闭时全部释放，避免残留占用导致下一次打不开 */
+    private val claimedItfs = mutableListOf<Int>()
+
     fun openRaw(): Boolean {
         val conn = manager.openDevice(device) ?: return false
         val sb = StringBuilder("接口拓扑：")
@@ -131,11 +134,15 @@ class SerialLink(
         }
         if (itf == null || epIn == null || epOut == null) { conn.close(); return false }
         if (!conn.claimInterface(itf, true)) { conn.close(); return false }
+        claimedItfs.add(itf.id)
         // 顺手把 CDC 控制接口也占住，保证 SET_CONTROL_LINE_STATE 确实作用到这个设备
         runCatching {
             for (k in 0 until device.interfaceCount) {
                 val it2 = device.getInterface(k)
-                if (it2.interfaceClass == 2) { conn.claimInterface(it2, true); break }
+                if (it2.interfaceClass == 2) {
+                    if (conn.claimInterface(it2, true)) claimedItfs.add(it2.id)
+                    break
+                }
             }
         }
         // CDC 要显式选 alternate setting 0，否则端点可能不可用
@@ -243,9 +250,19 @@ class SerialLink(
 
     fun close() {
         rawConn?.let { c ->
+            // 释放本次 claim 过的全部接口（数据接口 + CDC 控制接口），逐个兜底再按接口 0 放一次
+            claimedItfs.distinct().forEach { id ->
+                runCatching {
+                    for (k in 0 until device.interfaceCount) {
+                        val itf = device.getInterface(k)
+                        if (itf.id == id) { c.releaseInterface(itf); break }
+                    }
+                }
+            }
             runCatching { c.releaseInterface(device.getInterface(0)) }
             runCatching { c.close() }
         }
+        claimedItfs.clear()
         rawConn = null
         rawIn = null
         rawOut = null

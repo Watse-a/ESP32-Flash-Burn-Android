@@ -66,6 +66,8 @@ object Dialogs {
             w.setLayout((m.widthPixels - dp(ctx, 48)).coerceAtLeast(dp(ctx, 220)), ViewGroup.LayoutParams.WRAP_CONTENT)
             w.setDimAmount(0.6f)
             w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            // 带输入框的弹窗（网络日志 IP:端口）不缩上移，键盘弹出时整体上挪
+            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
         d.show()
         return d
@@ -140,13 +142,15 @@ object Dialogs {
         dlg = show(ctx, root)
     }
 
-    /** 自定义内容（表单等），可选「取消 / 确定」 */
+    /** 自定义内容（表单等），可选「取消 / 附加按钮 / 确定」 */
     fun custom(ctx: Context, title: String, content: View, okText: String = "确定",
-               cancelText: String? = "取消", onOk: () -> Unit) {
+               cancelText: String? = "取消", extraText: String? = null,
+               onExtra: (() -> Unit)? = null, onOk: () -> Unit) {
         val root = card(ctx, title, content)
         var dlg: Dialog? = null
         val buttons = ArrayList<Pair<String, (() -> Unit)?>>()
         if (cancelText != null) buttons.add(cancelText to { dlg?.dismiss() })
+        if (extraText != null) buttons.add(extraText to { dlg?.dismiss(); onExtra?.invoke() })
         buttons.add(okText to {
             dlg?.dismiss()
             onOk()

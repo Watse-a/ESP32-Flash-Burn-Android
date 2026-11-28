@@ -582,6 +582,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             val magic = at(0x20) or (at(0x21) shl 8) or (at(0x22) shl 16) or (at(0x23) shl 24)
             if (magic == 0xABCD5432.toInt()) return 0x10000
         }
+        // 识别不出来就留空，由用户手填
         return null
     }
 
@@ -1300,7 +1301,18 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
             refreshFileList()
             rebuild()
         }
-        v.findViewById<android.view.View>(R.id.libBack).setOnClickListener { dlg.dismiss() }
+        v.findViewById<android.view.View>(R.id.libBack).setOnClickListener {
+            val missing = files.filter { it.picked && it.offset == null }
+            if (missing.isEmpty()) {
+                dlg.dismiss()
+                return@setOnClickListener
+            }
+            Dialogs.confirm(
+                ctx, "偏移量未填",
+                "还有 ${missing.size} 个勾选的固件未填偏移地址（${missing.first().name}），确定要返回吗？",
+                okText = "仍然返回"
+            ) { dlg.dismiss() }
+        }
         rebuild()
         libRebuild = { runCatching { rebuild() } }
         dlg.setOnDismissListener { libRebuild = null }
@@ -1368,7 +1380,7 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         clearInfoRows()
         val devLabel = runCatching { "${device.productName ?: "未知设备"} · " +
                 String.format("%04X:%04X", device.vendorId, device.productId) }.getOrDefault("串口设备")
-        appendLog("========== 开始烧录 ${targets.size} 个文件 ==========")
+        appendLog(centerLine("开始烧录 ${targets.size} 个文件"))
         appendLog("设备：$devLabel")
         job = lifecycleScope.launch(Dispatchers.Default) {
             var failReason: String? = null
@@ -1544,6 +1556,8 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
                         FlashResult.showOk(requireContext(), seconds, done) {
                             openSerialWithReset()
                         }
+                        // 不点弹窗按钮也在后台把串口重连上，切到日志页就能直接看输出
+                        (activity as? MainActivity)?.reconnectSerialAfterFlash()
                     } else {
                         dumpFlashLog("烧录日志")
                         val gone = usbLost ||
@@ -1700,6 +1714,27 @@ class FlashFragment : Fragment(R.layout.fragment_flash) {
         } else {
             act.runOnUiThread { appendLogOnUi(text) }
         }
+    }
+
+    /**
+     * 居中分隔标题：文字放正中，两边用 fill 字符一直补到日志区边缘。
+     * 行首还有 [mm:ss] 时间戳，所以左侧补的条数要按时间戳宽度扣掉，
+     * 否则标题会被顶到右边，看着不居中。
+     */
+    private fun centerLine(title: String, fill: Char = '='): String {
+        val fallback = "======= $title ======="
+        if (!::logText.isInitialized) return fallback
+        val paint = logText.paint
+        val fillW = paint.measureText(fill.toString())
+        val titleW = paint.measureText(" $title ")
+        val stampW = paint.measureText("[88:88] ")
+        val avail = (logText.width - logText.paddingLeft - logText.paddingRight).toFloat()
+        if (fillW <= 0f || avail <= titleW + stampW + fillW * 6) return fallback
+        // 时间戳固定占左边一块，标题在剩下的区域里居中：左右两侧补的条数相等，
+        // 不再把时间戳宽度算进标题的居中基准。
+        val side = ((avail - stampW - titleW) / 2f / fillW).toInt()
+        if (side < 2) return fallback
+        return fill.toString().repeat(side) + " $title " + fill.toString().repeat(side)
     }
 
     /** 屏幕上这份日志的纯文本缓冲：每次整体 setText，不做增量 append */

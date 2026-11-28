@@ -29,6 +29,11 @@ object PortBus {
     var busyBy: String? = null
         private set
 
+    /** 最近一次打开失败的原因，给界面提示区分「被烧录占用」和「接口打不开/未授权」 */
+    @Volatile
+    var lastFailReason: String = ""
+        private set
+
     val link: SerialLink? get() = current
     val isOpen: Boolean get() = current != null
 
@@ -40,22 +45,30 @@ object PortBus {
     /** 同一个设备重复点连接时直接复用已有句柄，绝不关闭再重开（重开会让读线程炸掉、App 被系统重启） */
     @Synchronized
     fun open(ctx: Context, device: UsbDevice, baudRate: Int, onLog: (String) -> Unit): SerialLink? {
-        if (busyBy != null) return null
+        if (busyBy != null) {
+            lastFailReason = "烧录占用中"
+            return null
+        }
         val id = idOf(device)
         current?.let { l ->
             if (currentId == id && l.isHealthy()) {
                 L.i("串口已连接，复用现有句柄")
+                lastFailReason = ""
                 return l
             }
         }
         close()
         val l = SerialLink(ctx, device)
-        if (!l.open(onLog)) return null
+        if (!l.open(onLog)) {
+            lastFailReason = "接口打不开（被占用或未授权）"
+            return null
+        }
         l.setBaud(baudRate)
         current = l
         currentId = id
         label = UsbDevices.label(device)
         baud = baudRate
+        lastFailReason = ""
         L.i("串口已打开 $label @ $baudRate")
         return l
     }
